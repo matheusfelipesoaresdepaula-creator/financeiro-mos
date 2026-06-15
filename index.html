@@ -518,6 +518,16 @@ function render(){
   if (STATE.aba === "config") body = renderConfig();
   if (STATE.aba === "nova") body = renderTxForm();
 
+  const toast = GAUTH.msg
+    ? `<div style="position:fixed;bottom:24px;left:50%;transform:translateX(-50%);
+        background:${GAUTH.msgType==="err"?"#c0392b":"#1d9e75"};color:#fff;
+        padding:12px 22px;border-radius:10px;font-size:14px;font-weight:500;
+        z-index:9999;box-shadow:0 4px 16px rgba(0,0,0,.3);
+        white-space:nowrap;max-width:90vw;text-align:center">
+        ${esc(GAUTH.msg)}
+      </div>`
+    : "";
+
   const cloudBtn = GAUTH.signedIn
     ? `<button class="btn ${GAUTH.syncing?"":"primary"}" onclick="syncToDrive()" ${GAUTH.syncing?"disabled":""} title="Salvar no Google Drive">${GAUTH.syncing?"☁ Salvando…":"☁ Drive"}</button>`
     : `<button class="btn" onclick="googleSignIn()" title="Entrar com Google para salvar na nuvem">☁ Entrar</button>`;
@@ -542,7 +552,7 @@ function render(){
       </header>
       <nav class="nav">${nav}</nav>
       ${body}
-    </main>`;
+    </main>${toast}`;
 }
 
 function renderDashboard(d){
@@ -865,8 +875,8 @@ async function _handleGToken(resp){
     GAUTH.email = info.email || GAUTH.email;
     localStorage.setItem("cf_g_email", GAUTH.email);
   } catch(e){}
-  // Auto-carrega do Drive na primeira autenticação bem-sucedida
-  await _loadFromDrive(true);
+  // Auto-carrega do Drive após login
+  await _autoLoadFromDrive();
   render();
 }
 
@@ -962,44 +972,65 @@ async function syncToDrive(){
   }
 }
 
-async function _loadFromDrive(silent=false){
-  if (!GAUTH.signedIn) return;
-  GAUTH.syncing = true;
-  if (!silent) render();
+async function _fetchDriveData(){
+  let fileId = GAUTH.fileId;
+  if (!fileId){
+    const f = await _findFile();
+    if (!f) return null;
+    fileId = f.id;
+    GAUTH.fileId = fileId;
+    localStorage.setItem("cf_g_file_id", fileId);
+  }
+  const r = await _driveReq(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`);
+  if (!r) return null;
+  const data = await r.json();
+  return data;
+}
+
+async function _applyDriveData(data){
+  if (!data) throw new Error("Sem dados retornados.");
+  if (!data.txs && !data.cards) throw new Error("Arquivo não reconhecido.");
+  STATE.txs    = sortTxs((data.txs||[]).map(normalizeTx).filter(Boolean));
+  STATE.cards  = (data.cards||[]).map(normalizeCard).filter(Boolean);
+  STATE.settings = normalizeSettings(data.settings);
+  STATE.dirty  = false;
+  persist();
+  GAUTH.lastSync = new Date().toISOString();
+  localStorage.setItem("cf_g_last_sync", GAUTH.lastSync);
+}
+
+async function _autoLoadFromDrive(){
+  GAUTH.syncing = true; render();
   try {
-    let fileId = GAUTH.fileId;
-    if (!fileId){
-      const f = await _findFile();
-      if (!f){
-        if (!silent) _gMsg("Nenhum arquivo encontrado no Drive.", "err");
-        return;
-      }
-      fileId = f.id; GAUTH.fileId = fileId;
-      localStorage.setItem("cf_g_file_id", fileId);
+    const data = await _fetchDriveData();
+    if (!data){
+      _gMsg("Conectado ao Google ✓ — nenhum dado salvo no Drive ainda.", "ok");
+      return;
     }
-    const r = await _driveReq(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`);
-    if (!r) return;
-    const data = await r.json();
-    if (!data.txs && !data.cards) throw new Error("Arquivo inválido.");
-    if (!silent){
-      if (!confirm("Substituir dados locais pelos dados do Google Drive?")) return;
-    }
-    STATE.txs    = sortTxs((data.txs||[]).map(normalizeTx).filter(Boolean));
-    STATE.cards  = (data.cards||[]).map(normalizeCard).filter(Boolean);
-    STATE.settings = normalizeSettings(data.settings);
-    STATE.dirty  = false;
-    persist();
-    GAUTH.lastSync = new Date().toISOString();
-    localStorage.setItem("cf_g_last_sync", GAUTH.lastSync);
-    if (!silent) _gMsg("Dados carregados do Drive ✓");
+    await _applyDriveData(data);
+    _gMsg(`Dados carregados do Drive ✓ — ${STATE.txs.length} lançamento(s).`);
   } catch(e){
-    if (!silent) _gMsg("Erro ao carregar: "+e.message, "err");
+    _gMsg("Erro ao carregar do Drive: " + e.message, "err");
   } finally {
-    GAUTH.syncing = false;
+    GAUTH.syncing = false; render();
   }
 }
 
-async function syncFromDrive(){ await _loadFromDrive(false); render(); }
+async function syncFromDrive(){
+  if (!GAUTH.signedIn){ googleSignIn(); return; }
+  if (!confirm("Substituir dados locais pelos dados do Google Drive?")) return;
+  GAUTH.syncing = true; render();
+  try {
+    const data = await _fetchDriveData();
+    if (!data) throw new Error("Nenhum arquivo encontrado no Drive.");
+    await _applyDriveData(data);
+    _gMsg("Dados carregados do Drive ✓");
+  } catch(e){
+    _gMsg("Erro ao carregar: " + e.message, "err");
+  } finally {
+    GAUTH.syncing = false; render();
+  }
+}
 
 function renderGoogleSection(){
   const lastSync = GAUTH.lastSync ? `Última sincronização: ${fmtDatetime(GAUTH.lastSync)}` : "Nunca sincronizado";
