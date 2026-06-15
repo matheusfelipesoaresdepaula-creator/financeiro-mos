@@ -1096,15 +1096,8 @@ async function syncToDrive(){
       const f = await _findFile();
       if (f) { GAUTH.fileId = f.id; localStorage.setItem("cf_g_file_id", f.id); }
     }
-    const remoteData = GAUTH.fileId ? await _fetchDriveData().catch(()=>null) : null;
-    if (remoteData) {
-      const merged = mergeData({txs:STATE.txs,cards:STATE.cards,settings:STATE.settings},remoteData);
-      STATE.txs = merged.txs;
-      STATE.cards = merged.cards;
-      STATE.settings = merged.settings;
-      STATE.userView = normalizeUserView(STATE.userView);
-      if (!userById(STATE.form.userId)) STATE.form.userId = newTxUserId();
-    }
+    // Salva o estado local diretamente no Drive — sem mesclar com remoto,
+    // pois a mesclagem aditiva restaurava transações já excluídas.
     const payload = {
       version:1, savedAt:new Date().toISOString(),
       txs:sortTxs(STATE.txs), cards:STATE.cards, settings:STATE.settings,
