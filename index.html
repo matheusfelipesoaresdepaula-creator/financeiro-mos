@@ -117,6 +117,7 @@ input,select{min-width:0}
   .hide-mobile{display:none}
 }
 </style>
+<script src="https://accounts.google.com/gsi/client" async defer></script>
 </head>
 <body>
 <div id="root"></div>
@@ -132,6 +133,9 @@ const COLORS = ["#3266ad","#178566","#d84843","#b46d13","#c94b73","#7168d9","#5f
 const CARD_COLORS = ["#3266ad","#178566","#d35b2f","#7168d9","#c94b73","#9b6a16"];
 const STORAGE_KEY = "controle-financeiro-webplus:v1";
 const LEGACY_KEY = "controle-financeiro:v1";
+const GOOGLE_CLIENT_ID = "517044569526-2m20b2i2mq80ags900t0a6bo2t125bjl.apps.googleusercontent.com";
+const DRIVE_SCOPE      = "https://www.googleapis.com/auth/drive.file openid email";
+const DRIVE_FILENAME   = "controle-financeiro.json";
 
 
 const fmt = value => Number(value || 0).toLocaleString("pt-BR",{style:"currency",currency:"BRL"});
@@ -174,6 +178,19 @@ const STATE = {
   cardErro:"",
   configMsg:"",
   dirty:false,
+};
+
+// Estado do Google Auth (sessão apenas — token nunca persiste)
+const GAUTH = {
+  tokenClient: null,
+  accessToken:  null,
+  signedIn:     false,
+  syncing:      false,
+  email:        localStorage.getItem("cf_g_email")   || "",
+  fileId:       localStorage.getItem("cf_g_file_id") || "",
+  lastSync:     localStorage.getItem("cf_g_last_sync")|| "",
+  msg:          "",
+  msgType:      "ok",
 };
 
 function defaultSettings(){
@@ -501,6 +518,9 @@ function render(){
   if (STATE.aba === "config") body = renderConfig();
   if (STATE.aba === "nova") body = renderTxForm();
 
+  const cloudBtn = GAUTH.signedIn
+    ? `<button class="btn ${GAUTH.syncing?"":"primary"}" onclick="syncToDrive()" ${GAUTH.syncing?"disabled":""} title="Salvar no Google Drive">${GAUTH.syncing?"☁ Salvando…":"☁ Drive"}</button>`
+    : `<button class="btn" onclick="googleSignIn()" title="Entrar com Google para salvar na nuvem">☁ Entrar</button>`;
   const dirtyDot = STATE.dirty
     ? `<span style="width:8px;height:8px;border-radius:50%;background:#e8a000;display:inline-block;margin-right:4px;flex-shrink:0"></span>`
     : "";
@@ -515,6 +535,7 @@ function render(){
         </div>
         <div class="top-actions">
           <select class="input white" style="width:auto" onchange="STATE.mesSel=this.value;render()">${monthOptions}</select>
+          ${cloudBtn}
           <button class="btn ${STATE.dirty ? "primary" : ""}" onclick="saveToFile()" ${FH.saving?"disabled":""} title="${saveTitle}">${dirtyDot}${saveLabel}</button>
           <button class="btn primary" onclick="setAba('nova')">Nova transação</button>
         </div>
@@ -799,6 +820,224 @@ function renderCardDetail(d){
 }
 
 
+// ── GOOGLE DRIVE SYNC ────────────────────────────────────────────────────────
+
+function fmtDatetime(iso){
+  if (!iso) return "";
+  const d = new Date(iso);
+  return d.toLocaleDateString("pt-BR")+" "+d.toLocaleTimeString("pt-BR",{hour:"2-digit",minute:"2-digit"});
+}
+
+function _gMsg(msg, type="ok"){
+  GAUTH.msg = msg; GAUTH.msgType = type;
+  render();
+  if (type === "ok") setTimeout(()=>{ GAUTH.msg=""; render(); }, 4000);
+}
+
+function tryInitGoogleAuth(attempts=0){
+  if (window.google?.accounts?.oauth2){
+    GAUTH.tokenClient = window.google.accounts.oauth2.initTokenClient({
+      client_id: GOOGLE_CLIENT_ID,
+      scope:     DRIVE_SCOPE,
+      callback:  _handleGToken,
+    });
+    // Tenta autenticação silenciosa se já logou antes
+    if (GAUTH.email){
+      GAUTH.tokenClient.requestAccessToken({prompt:"none", hint: GAUTH.email});
+    }
+  } else if (attempts < 25){
+    setTimeout(()=>tryInitGoogleAuth(attempts+1), 300);
+  }
+}
+
+async function _handleGToken(resp){
+  if (resp.error || !resp.access_token){
+    // Falha silenciosa esperada quando usuário ainda não autorizou
+    GAUTH.signedIn = false; render(); return;
+  }
+  GAUTH.accessToken = resp.access_token;
+  GAUTH.signedIn    = true;
+  // Busca e-mail do usuário
+  try {
+    const r = await fetch("https://www.googleapis.com/oauth2/v2/userinfo",
+      {headers:{Authorization:`Bearer ${resp.access_token}`}});
+    const info = await r.json();
+    GAUTH.email = info.email || GAUTH.email;
+    localStorage.setItem("cf_g_email", GAUTH.email);
+  } catch(e){}
+  // Auto-carrega do Drive na primeira autenticação bem-sucedida
+  await _loadFromDrive(true);
+  render();
+}
+
+function googleSignIn(){
+  if (!GAUTH.tokenClient){
+    alert("Biblioteca Google ainda carregando. Aguarde alguns segundos e tente novamente.");
+    return;
+  }
+  GAUTH.tokenClient.requestAccessToken({prompt:"", hint: GAUTH.email || ""});
+}
+
+function googleSignOut(){
+  if (GAUTH.accessToken && window.google?.accounts?.oauth2){
+    window.google.accounts.oauth2.revoke(GAUTH.accessToken, ()=>{});
+  }
+  GAUTH.accessToken = null;
+  GAUTH.signedIn    = false;
+  GAUTH.msg         = "";
+  render();
+}
+
+async function _driveReq(url, opts={}){
+  if (!GAUTH.accessToken) return null;
+  const resp = await fetch(url, {
+    ...opts,
+    headers:{Authorization:`Bearer ${GAUTH.accessToken}`, ...(opts.headers||{})},
+  });
+  if (resp.status === 401){
+    GAUTH.signedIn = false; GAUTH.accessToken = null;
+    _gMsg("Sessão expirada. Clique em Reconectar.", "err");
+    return null;
+  }
+  return resp;
+}
+
+async function _findFile(){
+  const q = encodeURIComponent(`name='${DRIVE_FILENAME}' and trashed=false`);
+  const r = await _driveReq(`https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,modifiedTime)&spaces=drive`);
+  if (!r) return null;
+  const d = await r.json();
+  return d.files?.[0] || null;
+}
+
+async function _writeFile(content, fileId=null){
+  const boundary = "cfb_" + Date.now();
+  const body = [
+    `--${boundary}`,
+    "Content-Type: application/json; charset=UTF-8",
+    "",
+    JSON.stringify({name:DRIVE_FILENAME, mimeType:"application/json"}),
+    `--${boundary}`,
+    "Content-Type: application/json",
+    "",
+    JSON.stringify(content),
+    `--${boundary}--`,
+  ].join("\r\n");
+  const url = fileId
+    ? `https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=multipart`
+    : `https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart`;
+  const r = await _driveReq(url, {
+    method: fileId ? "PATCH" : "POST",
+    headers:{"Content-Type":`multipart/related; boundary=${boundary}`},
+    body,
+  });
+  return r ? r.json() : null;
+}
+
+async function syncToDrive(){
+  if (!GAUTH.signedIn){ googleSignIn(); return; }
+  GAUTH.syncing = true; render();
+  try {
+    // Busca fileId se não tiver
+    if (!GAUTH.fileId){
+      const f = await _findFile();
+      if (f) { GAUTH.fileId = f.id; localStorage.setItem("cf_g_file_id", f.id); }
+    }
+    const payload = {
+      version:1, savedAt:new Date().toISOString(),
+      txs:sortTxs(STATE.txs), cards:STATE.cards, settings:STATE.settings,
+    };
+    const result = await _writeFile(payload, GAUTH.fileId||null);
+    if (!result) throw new Error("Resposta inválida do Drive");
+    GAUTH.fileId   = result.id;
+    GAUTH.lastSync = new Date().toISOString();
+    localStorage.setItem("cf_g_file_id",    GAUTH.fileId);
+    localStorage.setItem("cf_g_last_sync",  GAUTH.lastSync);
+    STATE.dirty = false;
+    _gMsg("Salvo no Google Drive ✓");
+  } catch(e){
+    _gMsg("Erro ao salvar: "+e.message, "err");
+  } finally {
+    GAUTH.syncing = false; render();
+  }
+}
+
+async function _loadFromDrive(silent=false){
+  if (!GAUTH.signedIn) return;
+  GAUTH.syncing = true;
+  if (!silent) render();
+  try {
+    let fileId = GAUTH.fileId;
+    if (!fileId){
+      const f = await _findFile();
+      if (!f){
+        if (!silent) _gMsg("Nenhum arquivo encontrado no Drive.", "err");
+        return;
+      }
+      fileId = f.id; GAUTH.fileId = fileId;
+      localStorage.setItem("cf_g_file_id", fileId);
+    }
+    const r = await _driveReq(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`);
+    if (!r) return;
+    const data = await r.json();
+    if (!data.txs && !data.cards) throw new Error("Arquivo inválido.");
+    if (!silent){
+      if (!confirm("Substituir dados locais pelos dados do Google Drive?")) return;
+    }
+    STATE.txs    = sortTxs((data.txs||[]).map(normalizeTx).filter(Boolean));
+    STATE.cards  = (data.cards||[]).map(normalizeCard).filter(Boolean);
+    STATE.settings = normalizeSettings(data.settings);
+    STATE.dirty  = false;
+    persist();
+    GAUTH.lastSync = new Date().toISOString();
+    localStorage.setItem("cf_g_last_sync", GAUTH.lastSync);
+    if (!silent) _gMsg("Dados carregados do Drive ✓");
+  } catch(e){
+    if (!silent) _gMsg("Erro ao carregar: "+e.message, "err");
+  } finally {
+    GAUTH.syncing = false;
+  }
+}
+
+async function syncFromDrive(){ await _loadFromDrive(false); render(); }
+
+function renderGoogleSection(){
+  const lastSync = GAUTH.lastSync ? `Última sincronização: ${fmtDatetime(GAUTH.lastSync)}` : "Nunca sincronizado";
+  const msg = GAUTH.msg
+    ? `<p class="${GAUTH.msgType==="err"?"neg":"pos"}" style="font-size:13px;margin-top:8px">${esc(GAUTH.msg)}</p>`
+    : "";
+  if (GAUTH.signedIn){
+    return `
+      <div class="panel tight" style="background:var(--bg);margin-bottom:10px">
+        <div class="row between">
+          <div>
+            <p style="font-size:13px;font-weight:600">✓ ${esc(GAUTH.email)}</p>
+            <p class="footer-note">${lastSync}</p>
+          </div>
+          <button class="btn small ghost" onclick="googleSignOut()">Sair</button>
+        </div>
+      </div>
+      <div class="row" style="margin-bottom:4px">
+        <button class="btn primary" style="flex:1" onclick="syncToDrive()" ${GAUTH.syncing?"disabled":""}>
+          ${GAUTH.syncing?"Salvando…":"☁ Salvar no Drive"}
+        </button>
+        <button class="btn" style="flex:1" onclick="syncFromDrive()" ${GAUTH.syncing?"disabled":""}>
+          ${GAUTH.syncing?"Carregando…":"⬇ Carregar do Drive"}
+        </button>
+      </div>
+      ${msg}`;
+  }
+  return `
+    <p style="font-size:13px;color:var(--muted);margin-bottom:10px;line-height:1.6">
+      Entre com sua conta Google para salvar e acessar seus dados em qualquer dispositivo.
+      ${GAUTH.lastSync ? `<br><span class="footer-note">${lastSync}</span>` : ""}
+    </p>
+    <button class="btn primary" onclick="googleSignIn()">
+      ${GAUTH.email ? "Reconectar como "+esc(GAUTH.email) : "Entrar com Google"}
+    </button>
+    ${msg}`;
+}
+
 function renderConfig(){
   const settings = STATE.settings;
   return `<div class="grid cols-2">
@@ -813,6 +1052,9 @@ function renderConfig(){
         <label>Dias para aviso de vencimento</label>
         <input class="input" type="number" min="1" max="60" value="${settings.dueDays}" onchange="settingsDueDays(this.value)"/>
       </div>
+      <div style="height:18px"></div>
+      <h2 class="section-title">Google Drive</h2>
+      ${renderGoogleSection()}
       <div style="height:18px"></div>
       <button class="btn danger" onclick="clearAllData()">Limpar todos os dados</button>
       ${STATE.configMsg ? `<p class="footer-note">${esc(STATE.configMsg)}</p>` : ""}
@@ -1266,6 +1508,7 @@ function boot(){
   render();
   registerPwa();
   tryRestoreHandle();
+  tryInitGoogleAuth();
 }
 
 window.addEventListener("beforeunload", e => {
