@@ -219,6 +219,7 @@ const STATE = {
   cardErro:"",
   configMsg:"",
   dirty:false,
+  tombstones:new Set(),
 };
 
 // Estado do Google Auth (sessão apenas — token nunca persiste)
@@ -428,6 +429,7 @@ function loadState(){
             txs:sortTxs((parsed.txs||[]).map(t=>normalizeTx(t,settings.defaultUserId)).filter(Boolean)),
             cards:(parsed.cards||[]).map(normalizeCard).filter(Boolean),
             settings,
+            tombstones:new Set(parsed.tombstones || []),
           };
         }
       }
@@ -436,7 +438,7 @@ function loadState(){
   // Prioridade 2: localStorage (compatibilidade com versões anteriores)
   const current = readLocal(STORAGE_KEY);
   const raw = current || readLocal(LEGACY_KEY);
-  if (!raw) return {txs:[],cards:[],settings:defaultSettings()};
+  if (!raw) return {txs:[],cards:[],settings:defaultSettings(),tombstones:new Set()};
   try {
     const parsed = JSON.parse(raw);
     const settings = normalizeSettings(parsed.settings);
@@ -444,16 +446,17 @@ function loadState(){
       txs:sortTxs((parsed.txs||[]).map(t=>normalizeTx(t,settings.defaultUserId)).filter(Boolean)),
       cards:(parsed.cards||[]).map(normalizeCard).filter(Boolean),
       settings,
+      tombstones:new Set(parsed.tombstones || []),
     };
     if (!current) writeLocal(STORAGE_KEY,data);
     return data;
   } catch(e) {
-    return {txs:[],cards:[],settings:defaultSettings()};
+    return {txs:[],cards:[],settings:defaultSettings(),tombstones:new Set()};
   }
 }
 
 function persist(){
-  const payload = {txs:sortTxs(STATE.txs),cards:STATE.cards,settings:STATE.settings};
+  const payload = {txs:sortTxs(STATE.txs),cards:STATE.cards,settings:STATE.settings,tombstones:Array.from(STATE.tombstones)};
   writeLocal(STORAGE_KEY,payload);
   STATE.dirty = true;
 }
@@ -1118,15 +1121,19 @@ function mergeSettings(localSettings,remoteSettings){
   return {...local,users:mergedUsers,defaultUserId,categories:{despesa,receita}};
 }
 
-function mergeData(localData,remoteData){
+function mergeData(localData,remoteData,tombstones=new Set()){
   const settings = mergeSettings(localData.settings,remoteData?.settings);
   const cardMap = new Map();
   (remoteData?.cards || []).map(normalizeCard).filter(Boolean).forEach(c=>cardMap.set(c.id,c));
   (localData.cards || []).map(normalizeCard).filter(Boolean).forEach(c=>cardMap.set(c.id,c));
 
   const txMap = new Map();
-  (remoteData?.txs || []).map(t=>normalizeTx(t,settings.defaultUserId)).filter(Boolean).forEach(t=>txMap.set(t.id,t));
-  (localData.txs || []).map(t=>normalizeTx(t,settings.defaultUserId)).filter(Boolean).forEach(t=>txMap.set(t.id,t));
+  // Adiciona txs remotas (excluindo as marcadas como excluídas localmente)
+  (remoteData?.txs || []).map(t=>normalizeTx(t,settings.defaultUserId)).filter(Boolean)
+    .forEach(t=>{ if (!tombstones.has(t.id)) txMap.set(t.id,t); });
+  // Txs locais sobrescrevem as remotas (local é fonte de verdade para edições)
+  (localData.txs || []).map(t=>normalizeTx(t,settings.defaultUserId)).filter(Boolean)
+    .forEach(t=>txMap.set(t.id,t));
 
   return {
     txs:sortTxs(Array.from(txMap.values())),
@@ -1144,11 +1151,36 @@ async function syncToDrive(){
       const f = await _findFile();
       if (f) { GAUTH.fileId = f.id; localStorage.setItem("cf_g_file_id", f.id); }
     }
-    // Salva o estado local diretamente no Drive — sem mesclar com remoto,
-    // pois a mesclagem aditiva restaurava transações já excluídas.
+
+    // Busca dados remotos para mesclar antes de salvar
+    let remoteData = null;
+    if (GAUTH.fileId){
+      try {
+        const r = await _driveReq(`https://www.googleapis.com/drive/v3/files/${GAUTH.fileId}?alt=media`);
+        if (r && r.ok) remoteData = await r.json();
+      } catch(e){}
+    }
+
+    // Mescla tombstones: união de locais + remotos
+    const remoteTombstones = new Set(remoteData?.tombstones || []);
+    const mergedTombstones = new Set([...STATE.tombstones, ...remoteTombstones]);
+
+    // Mescla dados locais com remotos, respeitando tombstones
+    const localData = {txs:STATE.txs, cards:STATE.cards, settings:STATE.settings};
+    const merged = mergeData(localData, remoteData, mergedTombstones);
+
+    // Atualiza estado local com resultado da mesclagem
+    STATE.txs = merged.txs;
+    STATE.cards = merged.cards;
+    STATE.settings = merged.settings;
+    STATE.tombstones = mergedTombstones;
+    STATE.userView = normalizeUserView(STATE.userView);
+    if (!userById(STATE.form.userId)) STATE.form.userId = newTxUserId();
+
     const payload = {
       version:1, savedAt:new Date().toISOString(),
       txs:sortTxs(STATE.txs), cards:STATE.cards, settings:STATE.settings,
+      tombstones:Array.from(mergedTombstones),
     };
     const result = await _writeFile(payload, GAUTH.fileId||null);
     if (!result) throw new Error("Resposta inválida do Drive");
@@ -1156,7 +1188,7 @@ async function syncToDrive(){
     GAUTH.lastSync = new Date().toISOString();
     localStorage.setItem("cf_g_file_id",    GAUTH.fileId);
     localStorage.setItem("cf_g_last_sync",  GAUTH.lastSync);
-    writeLocal(STORAGE_KEY,{txs:sortTxs(STATE.txs),cards:STATE.cards,settings:STATE.settings});
+    writeLocal(STORAGE_KEY,{txs:sortTxs(STATE.txs),cards:STATE.cards,settings:STATE.settings,tombstones:Array.from(STATE.tombstones)});
     STATE.dirty = false;
     _gMsg("Salvo no Google Drive ✓");
   } catch(e){
@@ -1185,7 +1217,11 @@ async function _applyDriveData(data){
   if (!data) throw new Error("Sem dados retornados.");
   if (!data.txs && !data.cards) throw new Error("Arquivo não reconhecido.");
   const settings = normalizeSettings(data.settings);
-  STATE.txs    = sortTxs((data.txs||[]).map(t=>normalizeTx(t,settings.defaultUserId)).filter(Boolean));
+  // Mescla tombstones do Drive com os locais
+  const incomingTombstones = new Set(data.tombstones || []);
+  STATE.tombstones = new Set([...STATE.tombstones, ...incomingTombstones]);
+  STATE.txs    = sortTxs((data.txs||[]).map(t=>normalizeTx(t,settings.defaultUserId)).filter(Boolean)
+    .filter(t=>!STATE.tombstones.has(t.id)));
   STATE.cards  = (data.cards||[]).map(normalizeCard).filter(Boolean);
   STATE.settings = settings;
   STATE.userView = normalizeUserView(STATE.userView);
@@ -1204,7 +1240,22 @@ async function _autoLoadFromDrive(){
       _gMsg("Conectado ao Google ✓ — nenhum dado salvo no Drive ainda.", "ok");
       return;
     }
-    await _applyDriveData(data);
+    // Mescla tombstones: união de locais + remotos
+    const incomingTombstones = new Set(data.tombstones || []);
+    const mergedTombstones = new Set([...STATE.tombstones, ...incomingTombstones]);
+    // Mescla dados do Drive com dados locais (preserva lançamentos locais ainda não salvos)
+    const localData = {txs:STATE.txs, cards:STATE.cards, settings:STATE.settings};
+    const merged = mergeData(localData, data, mergedTombstones);
+    STATE.txs = merged.txs;
+    STATE.cards = merged.cards;
+    STATE.settings = merged.settings;
+    STATE.tombstones = mergedTombstones;
+    STATE.userView = normalizeUserView(STATE.userView);
+    if (!userById(STATE.form.userId)) STATE.form.userId = newTxUserId();
+    persist();
+    STATE.dirty = false;
+    GAUTH.lastSync = new Date().toISOString();
+    localStorage.setItem("cf_g_last_sync", GAUTH.lastSync);
     _gMsg(`Dados carregados do Drive ✓ — ${STATE.txs.length} lançamento(s).`);
   } catch(e){
     _gMsg("Erro ao carregar do Drive: " + e.message, "err");
@@ -1530,6 +1581,7 @@ function cancelEdit(){
 function deleteTx(id){
   id = String(id);
   if (!confirm("Excluir este lançamento?")) return;
+  STATE.tombstones.add(id);
   STATE.txs = STATE.txs.filter(t=>t.id !== id);
   persist();
   render();
@@ -1770,6 +1822,7 @@ async function saveToFile(){
 function _buildHtml(){
   const data = JSON.stringify({
     txs:sortTxs(STATE.txs), cards:STATE.cards, settings:STATE.settings,
+    tombstones:Array.from(STATE.tombstones),
   }, null, 2).replace(/<\/script>/gi,"<\\/script>");
   const html = "<!DOCTYPE html>\n" + document.documentElement.outerHTML;
   const rx = /(<script\s[^>]*id="app-data"[^>]*>)([\s\S]*?)(<\/script>)/i;
@@ -1790,6 +1843,7 @@ function _downloadFile(){
 
 function clearAllData(){
   if (!confirm("Apagar todos os dados? Esta ação não pode ser desfeita.")) return;
+  STATE.txs.forEach(t => STATE.tombstones.add(t.id));
   STATE.txs = [];
   STATE.cards = [];
   STATE.settings = defaultSettings();
@@ -1813,6 +1867,7 @@ function boot(){
   STATE.txs = data.txs;
   STATE.cards = data.cards;
   STATE.settings = data.settings;
+  STATE.tombstones = data.tombstones || new Set();
   STATE.userView = normalizeUserView(STATE.userView);
   try { localStorage.setItem(USER_VIEW_KEY,STATE.userView); } catch(e) {}
   STATE.form = emptyForm(newTxUserId());
