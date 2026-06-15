@@ -131,8 +131,14 @@ const METHODS = ["Pix","Boleto","Transferência bancária","Dinheiro","Cartão d
 const MONTHS = ["Janeiro","Fevereiro","Março","Abril","Maio","Junho","Julho","Agosto","Setembro","Outubro","Novembro","Dezembro"];
 const COLORS = ["#3266ad","#178566","#d84843","#b46d13","#c94b73","#7168d9","#5f8d24","#d35b2f"];
 const CARD_COLORS = ["#3266ad","#178566","#d35b2f","#7168d9","#c94b73","#9b6a16"];
+const DEFAULT_USERS = [
+  {id:"u1",nome:"Matheus"},
+  {id:"u2",nome:"Namorada"},
+];
+const ALL_USERS = "ambos";
 const STORAGE_KEY = "controle-financeiro-webplus:v1";
 const LEGACY_KEY = "controle-financeiro:v1";
+const USER_VIEW_KEY = "controle-financeiro-user-view:v1";
 const GOOGLE_CLIENT_ID = "517044569526-2m20b2i2mq80ags900t0a6bo2t125bjl.apps.googleusercontent.com";
 const DRIVE_SCOPE      = "https://www.googleapis.com/auth/drive.file openid email";
 const DRIVE_FILENAME   = "controle-financeiro.json";
@@ -164,6 +170,7 @@ const STATE = {
   settings:defaultSettings(),
   aba:"dashboard",
   mesSel:today().slice(0,7),
+  userView:readLocal(USER_VIEW_KEY) || DEFAULT_USERS[0].id,
   consAnt:false,
   editId:null,
   cardEditId:null,
@@ -173,6 +180,7 @@ const STATE = {
   form:emptyForm(),
   cardForm:emptyCardForm(),
   categoryForm:{tipo:"despesa",nome:""},
+  userForm:{nome:""},
   filters:{q:"",tipo:"todos",status:"todos",categoria:"",metodo:"",cartao:"",mes:"todos"},
   erro:"",
   cardErro:"",
@@ -196,12 +204,15 @@ const GAUTH = {
 function defaultSettings(){
   return {
     categories:JSON.parse(JSON.stringify(DEFAULT_CATEGORIES)),
+    users:JSON.parse(JSON.stringify(DEFAULT_USERS)),
+    defaultUserId:DEFAULT_USERS[0].id,
     dueDays:7,
   };
 }
 
-function emptyForm(){
+function emptyForm(userId=DEFAULT_USERS[0].id){
   return {
+    userId,
     tipo:"despesa",
     desc:"",
     valor:"",
@@ -265,17 +276,51 @@ function makeId(prefix="id"){
   return `${prefix}${Date.now().toString(36)}${Math.random().toString(36).slice(2,8)}`;
 }
 
-function nextTxId(txs){
-  return txs.reduce((max,t)=>Math.max(max,Number(t.id)||0),0)+1;
+function nextTxId(){
+  return makeId("t");
 }
 
-function normalizeTx(raw){
-  const id = Number(raw?.id);
-  if (!Number.isFinite(id)) return null;
+function jsArg(value){
+  return `'${String(value ?? "")
+    .replace(/\\/g,"\\\\")
+    .replace(/'/g,"\\'")
+    .replace(/"/g,"\\x22")
+    .replace(/</g,"\\x3c")
+    .replace(/>/g,"\\x3e")
+    .replace(/&/g,"\\x26")
+    .replace(/\n/g,"\\n")
+    .replace(/\r/g,"")}'`;
+}
+
+function normalizeUser(raw,index){
+  const isString = typeof raw === "string";
+  const name = String(isString ? raw : (raw?.nome || raw?.name || raw?.label || `Usuário ${index+1}`)).trim() || `Usuário ${index+1}`;
+  const fallback = DEFAULT_USERS[index]?.id || `u${index+1}`;
+  const id = String(isString ? "" : (raw?.id || raw?.userId || raw?.value || "")).trim() || fallback;
+  return {id,nome:name};
+}
+
+function normalizeUsers(rawUsers){
+  const source = Array.isArray(rawUsers) && rawUsers.length ? rawUsers : DEFAULT_USERS;
+  const seen = new Set();
+  return source.map((raw,index)=>{
+    const user = normalizeUser(raw,index);
+    let id = user.id;
+    let n = 2;
+    while (seen.has(id)) id = `${user.id}_${n++}`;
+    seen.add(id);
+    return {...user,id};
+  });
+}
+
+function normalizeTx(raw,fallbackUserId=DEFAULT_USERS[0].id){
+  const id = raw?.id;
+  if (id === undefined || id === null || String(id).trim() === "") return null;
   const tipo = raw.tipo === "receita" ? "receita" : "despesa";
   const valor = toNumber(raw.valor);
   return {
-    id,
+    id:String(id),
+    userId:String(raw.userId || raw.usuarioId || raw.responsavelId || fallbackUserId),
     tipo,
     desc:String(raw.desc || ""),
     valor:Number.isFinite(valor) ? valor : 0,
@@ -309,16 +354,21 @@ function normalizeSettings(raw){
   const categories = raw?.categories || {};
   const despesa = Array.from(new Set([...(categories.despesa || []), ...DEFAULT_CATEGORIES.despesa])).filter(Boolean);
   const receita = Array.from(new Set([...(categories.receita || []), ...DEFAULT_CATEGORIES.receita])).filter(Boolean);
+  const users = normalizeUsers(raw?.users);
+  const rawDefaultUserId = String(raw?.defaultUserId || "");
+  const defaultUserId = users.some(u=>u.id === rawDefaultUserId) ? rawDefaultUserId : users[0].id;
   return {
     ...base,
     ...raw,
     dueDays:Math.max(1,Math.min(60,toInt(raw?.dueDays,7))),
+    users,
+    defaultUserId,
     categories:{despesa,receita},
   };
 }
 
 function sortTxs(txs){
-  return txs.slice().sort((a,b)=>String(b.data).localeCompare(String(a.data)) || Number(b.id)-Number(a.id));
+  return txs.slice().sort((a,b)=>String(b.data).localeCompare(String(a.data)) || String(b.id).localeCompare(String(a.id),undefined,{numeric:true}));
 }
 
 function readLocal(key){
@@ -340,10 +390,11 @@ function loadState(){
       if (raw && raw !== '{"txs":[],"cards":[],"settings":{}}') {
         const parsed = JSON.parse(raw);
         if (parsed.txs || parsed.cards) {
+          const settings = normalizeSettings(parsed.settings);
           return {
-            txs:sortTxs((parsed.txs||[]).map(normalizeTx).filter(Boolean)),
+            txs:sortTxs((parsed.txs||[]).map(t=>normalizeTx(t,settings.defaultUserId)).filter(Boolean)),
             cards:(parsed.cards||[]).map(normalizeCard).filter(Boolean),
-            settings:normalizeSettings(parsed.settings),
+            settings,
           };
         }
       }
@@ -355,10 +406,11 @@ function loadState(){
   if (!raw) return {txs:[],cards:[],settings:defaultSettings()};
   try {
     const parsed = JSON.parse(raw);
+    const settings = normalizeSettings(parsed.settings);
     const data = {
-      txs:sortTxs((parsed.txs||[]).map(normalizeTx).filter(Boolean)),
+      txs:sortTxs((parsed.txs||[]).map(t=>normalizeTx(t,settings.defaultUserId)).filter(Boolean)),
       cards:(parsed.cards||[]).map(normalizeCard).filter(Boolean),
-      settings:normalizeSettings(parsed.settings),
+      settings,
     };
     if (!current) writeLocal(STORAGE_KEY,data);
     return data;
@@ -413,13 +465,60 @@ function categoryList(tipo,selected=""){
   return base.includes(selected) || !selected ? base : [selected,...base];
 }
 
+function userById(id){
+  return (STATE.settings.users || []).find(u=>u.id === id) || null;
+}
+
+function defaultUserId(){
+  const users = STATE.settings.users || DEFAULT_USERS;
+  return userById(STATE.settings.defaultUserId)?.id || users[0]?.id || DEFAULT_USERS[0].id;
+}
+
+function userName(id){
+  return userById(id)?.nome || "Usuário removido";
+}
+
+function normalizeUserView(value){
+  return value === ALL_USERS || userById(value) ? value : defaultUserId();
+}
+
+function userViewLabel(){
+  return STATE.userView === ALL_USERS ? "Ambos" : userName(STATE.userView);
+}
+
+function userOptionsHtml(selected,includeAll=false){
+  const all = includeAll ? `<option value="${ALL_USERS}" ${selected === ALL_USERS ? "selected" : ""}>Ambos</option>` : "";
+  const users = (STATE.settings.users || []).map(u=>`<option value="${esc(u.id)}" ${selected === u.id ? "selected" : ""}>${esc(u.nome)}</option>`).join("");
+  return all + users;
+}
+
+function setUserView(value){
+  STATE.userView = normalizeUserView(value);
+  try { localStorage.setItem(USER_VIEW_KEY,STATE.userView); } catch(e) {}
+  if (!STATE.editId && STATE.userView !== ALL_USERS) STATE.form.userId = STATE.userView;
+  render();
+}
+
+function newTxUserId(){
+  return STATE.userView !== ALL_USERS && userById(STATE.userView) ? STATE.userView : defaultUserId();
+}
+
+function txMatchesUser(t,userId=STATE.userView){
+  return userId === ALL_USERS || t.userId === userId;
+}
+
+function visibleTxs(){
+  return STATE.txs.filter(t=>txMatchesUser(t));
+}
+
 function calcDerived(){
-  const months = new Set(STATE.txs.map(t=>ym(t.data)));
+  const txs = visibleTxs();
+  const months = new Set(txs.map(t=>ym(t.data)));
   months.add(STATE.mesSel);
   const allMeses = Array.from(months).sort();
 
   const faturasPorMesCartao = {};
-  STATE.txs.filter(t=>t.cartaoId).forEach(t=>{
+  txs.filter(t=>t.cartaoId).forEach(t=>{
     const month = ym(t.data);
     if (!faturasPorMesCartao[month]) faturasPorMesCartao[month] = {};
     if (!faturasPorMesCartao[month][t.cartaoId]) faturasPorMesCartao[month][t.cartaoId] = [];
@@ -428,7 +527,7 @@ function calcDerived(){
 
   const saldoPorMes = {};
   allMeses.forEach(month=>{
-    const normais = STATE.txs.filter(t=>ym(t.data) === month && !t.cartaoId);
+    const normais = txs.filter(t=>ym(t.data) === month && !t.cartaoId);
     const faturas = faturasPorMesCartao[month] || {};
     let receitas=0,despesas=0,recTot=0,despTot=0;
     normais.forEach(t=>{
@@ -455,15 +554,15 @@ function calcDerived(){
   const base = saldoPorMes[STATE.mesSel] || {receitas:0,despesas:0,saldoMes:0,recTot:0,despTot:0};
   const resumoMes = {...base,saldoFinal:STATE.consAnt ? base.saldoMes + saldoAnt : base.saldoMes};
 
-  const txsMes = STATE.txs.filter(t=>ym(t.data) === STATE.mesSel && !t.cartaoId).sort((a,b)=>b.data.localeCompare(a.data));
+  const txsMes = txs.filter(t=>ym(t.data) === STATE.mesSel && !t.cartaoId).sort((a,b)=>b.data.localeCompare(a.data));
   const faturasMes = faturasPorMesCartao[STATE.mesSel] || {};
-  const porCat = categoryTotals(STATE.txs.filter(t=>ym(t.data) === STATE.mesSel && t.tipo === "despesa" && isDone(t)));
+  const porCat = categoryTotals(txs.filter(t=>ym(t.data) === STATE.mesSel && t.tipo === "despesa" && isDone(t)));
   const usoCartao = {};
   STATE.cards.forEach(c=>{
-    usoCartao[c.id] = STATE.txs.filter(t=>t.cartaoId === c.id && !isDone(t)).reduce((s,t)=>s+t.valor,0);
+    usoCartao[c.id] = txs.filter(t=>t.cartaoId === c.id && !isDone(t)).reduce((s,t)=>s+t.valor,0);
   });
 
-  return {allMeses,faturasPorMesCartao,saldoPorMes,saldoAcum,saldoAnt,resumoMes,txsMes,faturasMes,porCat,usoCartao};
+  return {txs,allMeses,faturasPorMesCartao,saldoPorMes,saldoAcum,saldoAnt,resumoMes,txsMes,faturasMes,porCat,usoCartao};
 }
 
 function categoryTotals(txs){
@@ -475,8 +574,8 @@ function categoryTotals(txs){
 function filteredTxs(){
   const f = STATE.filters;
   const q = f.q.trim().toLowerCase();
-  return STATE.txs.filter(t=>{
-    if (q && !`${t.desc} ${t.categoria} ${t.metodo} ${cardName(t.cartaoId)}`.toLowerCase().includes(q)) return false;
+  return visibleTxs().filter(t=>{
+    if (q && !`${t.desc} ${t.categoria} ${t.metodo} ${cardName(t.cartaoId)} ${userName(t.userId)}`.toLowerCase().includes(q)) return false;
     if (f.mes !== "todos" && ym(t.data) !== f.mes) return false;
     if (f.tipo !== "todos" && t.tipo !== f.tipo) return false;
     if (f.status !== "todos" && getSit(t) !== f.status) return false;
@@ -490,7 +589,7 @@ function filteredTxs(){
 
 function dueAlerts(){
   const limit = addDays(today(),STATE.settings.dueDays);
-  return STATE.txs
+  return visibleTxs()
     .filter(t=>!isDone(t) && t.dataVenc && t.dataVenc <= limit)
     .sort((a,b)=>a.dataVenc.localeCompare(b.dataVenc));
 }
@@ -518,6 +617,7 @@ function render(){
   if (STATE.aba === "config") body = renderConfig();
   if (STATE.aba === "nova") body = renderTxForm();
 
+  const userOptions = userOptionsHtml(STATE.userView,true);
   const toast = GAUTH.msg
     ? `<div style="position:fixed;bottom:24px;left:50%;transform:translateX(-50%);
         background:${GAUTH.msgType==="err"?"#c0392b":"#1d9e75"};color:#fff;
@@ -541,9 +641,10 @@ function render(){
       <header class="topbar">
         <div class="brand">
           <h1>Controle financeiro</h1>
-          <p>${monthLabel(STATE.mesSel)}</p>
+          <p>${monthLabel(STATE.mesSel)} · ${esc(userViewLabel())}</p>
         </div>
         <div class="top-actions">
+          <select class="input white" style="width:auto" onchange="setUserView(this.value)">${userOptions}</select>
           <select class="input white" style="width:auto" onchange="STATE.mesSel=this.value;render()">${monthOptions}</select>
           ${cloudBtn}
           <button class="btn ${STATE.dirty ? "primary" : ""}" onclick="saveToFile()" ${FH.saving?"disabled":""} title="${saveTitle}">${dirtyDot}${saveLabel}</button>
@@ -582,7 +683,7 @@ function renderDashboard(d){
   // Reports data
   const months = d.allMeses.slice(-8);
   const maxMonthly = Math.max(1,...months.map(m=>Math.max(d.saldoPorMes[m]?.recTot || 0,d.saldoPorMes[m]?.despTot || 0)));
-  const expensesMonth = STATE.txs.filter(t=>ym(t.data) === STATE.mesSel && t.tipo === "despesa");
+  const expensesMonth = d.txs.filter(t=>ym(t.data) === STATE.mesSel && t.tipo === "despesa");
   const byCat = categoryTotals(expensesMonth);
   const top = expensesMonth.slice().sort((a,b)=>b.valor-a.valor).slice(0,6);
   const cardRows = STATE.cards.map((c,i)=>{
@@ -716,18 +817,19 @@ function renderTxRow(t,showCard=false){
   const sign = t.tipo === "receita" ? "+" : "-";
   const parcela = t.totalParcelas > 1 ? ` ${t.parcelaAtual}/${t.totalParcelas}x` : "";
   const cardTag = showCard && t.cartaoId ? `<span class="chip info">${esc(cardName(t.cartaoId))}</span>` : "";
+  const userTag = STATE.userView === ALL_USERS ? `<span class="chip">${esc(userName(t.userId))}</span>` : "";
   const due = t.dataVenc ? ` · vence ${fmtD(t.dataVenc)}` : "";
   return `<div class="tx">
     <span class="dot" style="background:${color}"></span>
     <div style="min-width:0">
-      <div class="tx-title"><p>${esc(t.desc)}${parcela}</p>${t.recorrGrupo ? `<span class="chip">recorrente</span>` : ""}${cardTag}</div>
+      <div class="tx-title"><p>${esc(t.desc)}${parcela}</p>${t.recorrGrupo ? `<span class="chip">recorrente</span>` : ""}${cardTag}${userTag}</div>
       <div class="tx-sub">${esc(t.categoria)} · ${esc(t.metodo)} · ${fmtD(t.data)}${due}</div>
     </div>
-    <span class="chip ${statusClass}" onclick="toggleSit(${t.id})">${statusLabel}</span>
+    <span class="chip ${statusClass}" onclick="toggleSit(${jsArg(t.id)})">${statusLabel}</span>
     <strong class="amount" style="color:${color};text-align:right;min-width:92px">${sign}${fmt(t.valor)}</strong>
     <span class="actions row">
-      <button class="icon-btn" title="Editar" onclick="startEdit(${t.id})">Editar</button>
-      <button class="icon-btn" title="Excluir" onclick="deleteTx(${t.id})">Excluir</button>
+      <button class="icon-btn" title="Editar" onclick="startEdit(${jsArg(t.id)})">Editar</button>
+      <button class="icon-btn" title="Excluir" onclick="deleteTx(${jsArg(t.id)})">Excluir</button>
     </span>
   </div>`;
 }
@@ -740,14 +842,19 @@ function renderFaturaRow(cardId,month,arr){
   const key = `${cardId}_${month}`;
   const open = STATE.faturaOpen[key];
   const status = allPaid ? ["ok","Pago"] : (somePaid ? ["info","Parcial"] : ["info","A pagar"]);
+  const userTotals = {};
+  arr.forEach(t=>{ userTotals[t.userId] = (userTotals[t.userId] || 0) + t.valor; });
+  const usersText = STATE.userView === ALL_USERS
+    ? Object.entries(userTotals).map(([id,value])=>`${esc(userName(id))}: ${fmt(value)}`).join(" · ")
+    : "";
   return `<div class="panel tight" style="margin-bottom:8px">
-    <div class="row between wrap" onclick="toggleFatura('${cardId}','${month}')" style="cursor:pointer">
+    <div class="row between wrap" onclick="toggleFatura(${jsArg(cardId)},${jsArg(month)})" style="cursor:pointer">
       <div>
         <strong>Fatura ${esc(cardName(cardId))}</strong>
-        <p class="muted" style="font-size:12px">${arr.length} compra${arr.length === 1 ? "" : "s"}${card ? ` · vence dia ${card.diaVenc}` : ""}</p>
+        <p class="muted" style="font-size:12px">${arr.length} compra${arr.length === 1 ? "" : "s"}${usersText ? ` · ${usersText}` : ""}${card ? ` · vence dia ${card.diaVenc}` : ""}</p>
       </div>
       <div class="row wrap">
-        ${allPaid ? "" : `<button class="btn small" onclick="event.stopPropagation();pagarFatura('${cardId}','${month}')">Pagar tudo</button>`}
+        ${allPaid ? "" : `<button class="btn small" onclick="event.stopPropagation();pagarFatura(${jsArg(cardId)},${jsArg(month)})">Pagar tudo</button>`}
         <span class="chip ${status[0]}">${status[1]}</span>
         <strong class="neg">-${fmt(total)}</strong>
       </div>
@@ -806,7 +913,7 @@ function renderCardForm(){
 function renderCardDetail(d){
   const card = cardById(STATE.cardDetalhe);
   if (!card) { STATE.cardDetalhe = null; render(); return; }
-  const txs = STATE.txs.filter(t=>t.cartaoId === card.id).sort((a,b)=>b.data.localeCompare(a.data));
+  const txs = visibleTxs().filter(t=>t.cartaoId === card.id).sort((a,b)=>b.data.localeCompare(a.data));
   const grouped = {};
   txs.forEach(t=>{ const month = ym(t.data); if (!grouped[month]) grouped[month] = []; grouped[month].push(t); });
   const usage = d.usoCartao[card.id] || 0;
@@ -814,7 +921,10 @@ function renderCardDetail(d){
   const idx = STATE.cards.findIndex(c=>c.id === card.id);
   const color = CARD_COLORS[idx % CARD_COLORS.length];
   document.getElementById("root").innerHTML = `<main class="app">
-    <button class="btn ghost" onclick="STATE.cardDetalhe=null;render()" style="margin-bottom:12px">Voltar</button>
+    <div class="row between wrap" style="margin-bottom:12px">
+      <button class="btn ghost" onclick="STATE.cardDetalhe=null;render()">Voltar</button>
+      <select class="input white" style="width:auto" onchange="setUserView(this.value)">${userOptionsHtml(STATE.userView,true)}</select>
+    </div>
     <section class="card" style="background:${color};margin-bottom:16px">
       <div>
         <h1 style="font-size:22px">${esc(card.nome)}</h1>
@@ -944,6 +1054,39 @@ async function _writeFile(content, fileId=null){
   return r ? r.json() : null;
 }
 
+function mergeSettings(localSettings,remoteSettings){
+  const local = normalizeSettings(localSettings);
+  const remote = normalizeSettings(remoteSettings);
+  const users = [];
+  const userMap = new Map();
+  [...remote.users,...local.users].forEach(u=>{
+    if (!userMap.has(u.id)) users.push(u);
+    userMap.set(u.id,u);
+  });
+  const mergedUsers = users.map(u=>userMap.get(u.id));
+  const despesa = Array.from(new Set([...(remote.categories.despesa || []), ...(local.categories.despesa || [])])).filter(Boolean);
+  const receita = Array.from(new Set([...(remote.categories.receita || []), ...(local.categories.receita || [])])).filter(Boolean);
+  const defaultUserId = mergedUsers.some(u=>u.id === local.defaultUserId) ? local.defaultUserId : (mergedUsers[0]?.id || DEFAULT_USERS[0].id);
+  return {...local,users:mergedUsers,defaultUserId,categories:{despesa,receita}};
+}
+
+function mergeData(localData,remoteData){
+  const settings = mergeSettings(localData.settings,remoteData?.settings);
+  const cardMap = new Map();
+  (remoteData?.cards || []).map(normalizeCard).filter(Boolean).forEach(c=>cardMap.set(c.id,c));
+  (localData.cards || []).map(normalizeCard).filter(Boolean).forEach(c=>cardMap.set(c.id,c));
+
+  const txMap = new Map();
+  (remoteData?.txs || []).map(t=>normalizeTx(t,settings.defaultUserId)).filter(Boolean).forEach(t=>txMap.set(t.id,t));
+  (localData.txs || []).map(t=>normalizeTx(t,settings.defaultUserId)).filter(Boolean).forEach(t=>txMap.set(t.id,t));
+
+  return {
+    txs:sortTxs(Array.from(txMap.values())),
+    cards:Array.from(cardMap.values()),
+    settings,
+  };
+}
+
 async function syncToDrive(){
   if (!GAUTH.signedIn){ googleSignIn(); return; }
   GAUTH.syncing = true; render();
@@ -952,6 +1095,15 @@ async function syncToDrive(){
     if (!GAUTH.fileId){
       const f = await _findFile();
       if (f) { GAUTH.fileId = f.id; localStorage.setItem("cf_g_file_id", f.id); }
+    }
+    const remoteData = GAUTH.fileId ? await _fetchDriveData().catch(()=>null) : null;
+    if (remoteData) {
+      const merged = mergeData({txs:STATE.txs,cards:STATE.cards,settings:STATE.settings},remoteData);
+      STATE.txs = merged.txs;
+      STATE.cards = merged.cards;
+      STATE.settings = merged.settings;
+      STATE.userView = normalizeUserView(STATE.userView);
+      if (!userById(STATE.form.userId)) STATE.form.userId = newTxUserId();
     }
     const payload = {
       version:1, savedAt:new Date().toISOString(),
@@ -963,6 +1115,7 @@ async function syncToDrive(){
     GAUTH.lastSync = new Date().toISOString();
     localStorage.setItem("cf_g_file_id",    GAUTH.fileId);
     localStorage.setItem("cf_g_last_sync",  GAUTH.lastSync);
+    writeLocal(STORAGE_KEY,{txs:sortTxs(STATE.txs),cards:STATE.cards,settings:STATE.settings});
     STATE.dirty = false;
     _gMsg("Salvo no Google Drive ✓");
   } catch(e){
@@ -990,11 +1143,14 @@ async function _fetchDriveData(){
 async function _applyDriveData(data){
   if (!data) throw new Error("Sem dados retornados.");
   if (!data.txs && !data.cards) throw new Error("Arquivo não reconhecido.");
-  STATE.txs    = sortTxs((data.txs||[]).map(normalizeTx).filter(Boolean));
+  const settings = normalizeSettings(data.settings);
+  STATE.txs    = sortTxs((data.txs||[]).map(t=>normalizeTx(t,settings.defaultUserId)).filter(Boolean));
   STATE.cards  = (data.cards||[]).map(normalizeCard).filter(Boolean);
-  STATE.settings = normalizeSettings(data.settings);
-  STATE.dirty  = false;
+  STATE.settings = settings;
+  STATE.userView = normalizeUserView(STATE.userView);
+  if (!userById(STATE.form.userId)) STATE.form.userId = newTxUserId();
   persist();
+  STATE.dirty  = false;
   GAUTH.lastSync = new Date().toISOString();
   localStorage.setItem("cf_g_last_sync", GAUTH.lastSync);
 }
@@ -1073,6 +1229,10 @@ function renderConfig(){
   const settings = STATE.settings;
   return `<div class="grid cols-2">
     <section class="panel">
+      <h2 class="section-title">Usuários</h2>
+      ${renderUserManager()}
+    </section>
+    <section class="panel">
       <h2 class="section-title">Categorias</h2>
       ${renderCategoryManager("despesa","Despesas")}
       ${renderCategoryManager("receita","Receitas")}
@@ -1090,6 +1250,26 @@ function renderConfig(){
       <button class="btn danger" onclick="clearAllData()">Limpar todos os dados</button>
       ${STATE.configMsg ? `<p class="footer-note">${esc(STATE.configMsg)}</p>` : ""}
     </section>
+  </div>`;
+}
+
+function renderUserManager(){
+  const users = STATE.settings.users || [];
+  return `<div>
+    ${users.map(user=>{
+      const hasTxs = STATE.txs.some(t=>t.userId === user.id);
+      const isDefault = STATE.settings.defaultUserId === user.id;
+      return `<div class="row wrap" style="margin-bottom:10px">
+        <input class="input" style="flex:1;min-width:180px" value="${esc(user.nome)}" onchange="renameUser(${jsArg(user.id)},this.value)"/>
+        <button class="btn small ${isDefault ? "primary" : ""}" onclick="setDefaultUser(${jsArg(user.id)})">${isDefault ? "Padrão" : "Usar como padrão"}</button>
+        <button class="btn small danger" ${hasTxs || users.length <= 1 ? "disabled" : ""} title="${hasTxs ? "Há lançamentos para este usuário" : "Remover usuário"}" onclick="removeUser(${jsArg(user.id)})">Remover</button>
+      </div>`;
+    }).join("")}
+    <div class="row" style="margin-top:12px">
+      <input class="input" placeholder="Novo usuário" value="${esc(STATE.userForm.nome)}" oninput="STATE.userForm.nome=this.value"/>
+      <button class="btn primary" onclick="addUser()">Adicionar</button>
+    </div>
+    <p class="footer-note">Cartões ficam compartilhados; cada lançamento guarda o responsável escolhido.</p>
   </div>`;
 }
 
@@ -1112,6 +1292,7 @@ function renderTxForm(){
   const isCard = form.metodo === "Cartão de crédito";
   const cats = categoryList(form.tipo,form.categoria);
   const methods = form.tipo === "receita" ? METHODS.filter(m=>!m.includes("Cartão")) : METHODS;
+  const userOptions = userOptionsHtml(form.userId,false);
   const value = toNumber(form.valor);
   const parcels = Array.from({length:24},(_,i)=>i+1).map(n=>{
     const label = n > 1 && Number.isFinite(value) && value > 0 ? ` de ${fmt(value/n)}` : "";
@@ -1131,6 +1312,7 @@ function renderTxForm(){
       <div class="field" style="grid-column:1/-1"><label>Descrição</label><input class="input" placeholder="Ex: Aluguel, Salário..." value="${esc(form.desc)}" oninput="STATE.form.desc=this.value"/></div>
       <div class="field"><label>Valor</label><input class="input" inputmode="numeric" placeholder="R$ 0,00" value="${esc(moneyDisplay(form.valor))}" oninput="handleMoneyInput(this, STATE.form)"/></div>
       <div class="field"><label>Data</label><input class="input" type="date" value="${form.data}" oninput="STATE.form.data=this.value" onchange="STATE.form.data=this.value;render()"/></div>
+      <div class="field"><label>Responsável</label><select class="input" onchange="STATE.form.userId=this.value">${userOptions}</select></div>
       <div class="field"><label>Categoria</label><select class="input" onchange="STATE.form.categoria=this.value">${cats.map(c=>`<option value="${esc(c)}" ${form.categoria===c?"selected":""}>${esc(c)}</option>`).join("")}</select></div>
       <div class="field"><label>Método</label><select class="input" onchange="STATE.form.metodo=this.value;STATE.form.cartaoId='';STATE.form.parcelas=1;render()">${methods.map(m=>`<option value="${m}" ${form.metodo===m?"selected":""}>${m}</option>`).join("")}</select></div>
     </div>
@@ -1157,7 +1339,7 @@ function renderTxForm(){
 
 function setAba(id){
   STATE.aba = id;
-  if (id !== "nova") { STATE.editId = null; STATE.form = emptyForm(); STATE.erro = ""; }
+  if (id !== "nova") { STATE.editId = null; STATE.form = emptyForm(newTxUserId()); STATE.erro = ""; }
   render();
 }
 
@@ -1181,17 +1363,18 @@ function saveTx(){
   if (!desc) { STATE.erro = "Informe uma descrição."; render(); return; }
   if (!Number.isFinite(valor) || valor <= 0) { STATE.erro = "Informe um valor válido."; render(); return; }
   if (!form.data) { STATE.erro = "Informe uma data."; render(); return; }
+  if (!userById(form.userId)) { STATE.erro = "Selecione o responsável."; render(); return; }
   if (form.metodo === "Cartão de crédito" && !form.cartaoId) { STATE.erro = "Selecione o cartão."; render(); return; }
 
   if (STATE.editId) {
-    const idx = STATE.txs.findIndex(t=>t.id === STATE.editId);
+    const idx = STATE.txs.findIndex(t=>t.id === String(STATE.editId));
     if (idx >= 0) STATE.txs[idx] = normalizeTx({...STATE.txs[idx],...form,desc,valor,id:STATE.editId});
   } else {
     addTxsFromForm({...form,desc,valor});
   }
   STATE.txs = sortTxs(STATE.txs);
   persist();
-  STATE.form = emptyForm();
+  STATE.form = emptyForm(newTxUserId());
   STATE.editId = null;
   STATE.erro = "";
   STATE.aba = "dashboard";
@@ -1199,7 +1382,7 @@ function saveTx(){
 }
 
 function addTxsFromForm(form){
-  let id = nextTxId(STATE.txs);
+  const nextId = () => nextTxId();
   if (form.metodo === "Cartão de crédito") {
     const card = cardById(form.cartaoId);
     const parcelas = Math.max(1,toInt(form.parcelas,1));
@@ -1209,7 +1392,8 @@ function addTxsFromForm(form){
     for (let i=0;i<parcelas;i++) {
       const month = addM(base,i);
       STATE.txs.push({
-        id:id++,
+        id:nextId(),
+        userId:form.userId,
         tipo:"despesa",
         desc:form.desc,
         valor:valorParcela,
@@ -1236,7 +1420,8 @@ function addTxsFromForm(form){
     for (let i=0;i<months;i++) {
       const month = addM(base,i);
       STATE.txs.push({
-        id:id++,
+        id:nextId(),
+        userId:form.userId,
         tipo:form.tipo,
         desc:form.desc,
         valor:form.valor,
@@ -1256,7 +1441,8 @@ function addTxsFromForm(form){
     return;
   }
   STATE.txs.push(normalizeTx({
-    id,
+    id:nextId(),
+    userId:form.userId,
     tipo:form.tipo,
     desc:form.desc,
     valor:form.valor,
@@ -1269,9 +1455,11 @@ function addTxsFromForm(form){
 }
 
 function startEdit(id){
+  id = String(id);
   const tx = STATE.txs.find(t=>t.id === id);
   if (!tx) return;
   STATE.form = {
+    userId:tx.userId,
     tipo:tx.tipo,
     desc:tx.desc,
     valor:moneyDisplay(tx.valor),
@@ -1292,13 +1480,14 @@ function startEdit(id){
 
 function cancelEdit(){
   STATE.editId = null;
-  STATE.form = emptyForm();
+  STATE.form = emptyForm(newTxUserId());
   STATE.erro = "";
   STATE.aba = "dashboard";
   render();
 }
 
 function deleteTx(id){
+  id = String(id);
   if (!confirm("Excluir este lançamento?")) return;
   STATE.txs = STATE.txs.filter(t=>t.id !== id);
   persist();
@@ -1306,6 +1495,7 @@ function deleteTx(id){
 }
 
 function toggleSit(id){
+  id = String(id);
   const tx = STATE.txs.find(t=>t.id === id);
   if (!tx) return;
   const sit = getSit(tx);
@@ -1315,7 +1505,7 @@ function toggleSit(id){
 }
 
 function pagarFatura(cardId,month){
-  STATE.txs.forEach(t=>{ if (t.cartaoId === cardId && ym(t.data) === month) t.situacao = "pago"; });
+  STATE.txs.forEach(t=>{ if (t.cartaoId === cardId && ym(t.data) === month && txMatchesUser(t)) t.situacao = "pago"; });
   persist();
   render();
 }
@@ -1409,6 +1599,50 @@ function removeCategory(tipo,nome){
 
 function settingsDueDays(value){
   STATE.settings.dueDays = Math.max(1,Math.min(60,toInt(value,7)));
+  persist();
+  render();
+}
+
+function renameUser(id,value){
+  const user = userById(id);
+  if (!user) return;
+  const name = String(value || "").trim();
+  if (!name) { render(); return; }
+  user.nome = name;
+  persist();
+  render();
+}
+
+function addUser(){
+  const name = STATE.userForm.nome.trim();
+  if (!name) return;
+  STATE.settings.users.push({id:makeId("u"),nome:name});
+  STATE.userForm.nome = "";
+  persist();
+  render();
+}
+
+function setDefaultUser(id){
+  if (!userById(id)) return;
+  STATE.settings.defaultUserId = id;
+  persist();
+  render();
+}
+
+function removeUser(id){
+  if (STATE.settings.users.length <= 1) return;
+  if (STATE.txs.some(t=>t.userId === id)) {
+    alert("Este usuário tem lançamentos. Renomeie o usuário ou exclua/reatribua os lançamentos antes de remover.");
+    return;
+  }
+  if (!confirm("Remover este usuário?")) return;
+  STATE.settings.users = STATE.settings.users.filter(u=>u.id !== id);
+  if (STATE.settings.defaultUserId === id) STATE.settings.defaultUserId = STATE.settings.users[0]?.id || DEFAULT_USERS[0].id;
+  if (STATE.userView === id) {
+    STATE.userView = defaultUserId();
+    try { localStorage.setItem(USER_VIEW_KEY,STATE.userView); } catch(e) {}
+  }
+  if (STATE.form.userId === id) STATE.form.userId = newTxUserId();
   persist();
   render();
 }
@@ -1518,6 +1752,9 @@ function clearAllData(){
   STATE.txs = [];
   STATE.cards = [];
   STATE.settings = defaultSettings();
+  STATE.userView = defaultUserId();
+  STATE.form = emptyForm(newTxUserId());
+  try { localStorage.setItem(USER_VIEW_KEY,STATE.userView); } catch(e) {}
   STATE.configMsg = "Dados apagados. Clique em 💾 Salvar arquivo para confirmar.";
   persist();
   render();
@@ -1535,7 +1772,9 @@ function boot(){
   STATE.txs = data.txs;
   STATE.cards = data.cards;
   STATE.settings = data.settings;
-  STATE.form = emptyForm();
+  STATE.userView = normalizeUserView(STATE.userView);
+  try { localStorage.setItem(USER_VIEW_KEY,STATE.userView); } catch(e) {}
+  STATE.form = emptyForm(newTxUserId());
   render();
   registerPwa();
   tryRestoreHandle();
