@@ -1,0 +1,1279 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover"/>
+<meta name="theme-color" content="#3266ad"/>
+<meta name="apple-mobile-web-app-capable" content="yes"/>
+<meta name="apple-mobile-web-app-title" content="Controle Financeiro"/>
+<title>Controle Financeiro</title>
+<link rel="manifest" href="./manifest.webmanifest"/>
+<link rel="icon" href="./icon.svg" type="image/svg+xml"/>
+<style>
+:root{
+  --bg:#f4f3ef;
+  --paper:#fff;
+  --soft:#eeece6;
+  --line:#dedbd3;
+  --line-soft:#eeece6;
+  --text:#1a1917;
+  --muted:#68655f;
+  --faint:#9d9991;
+  --blue:#3266ad;
+  --green:#178566;
+  --red:#d84843;
+  --amber:#b46d13;
+  --pink:#c94b73;
+  --violet:#7168d9;
+  --radius:8px;
+  --shadow:0 12px 30px rgba(26,25,23,.07);
+  --font:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{min-height:100%;background:var(--bg);color:var(--text);font-family:var(--font);font-size:15px;line-height:1.45;-webkit-font-smoothing:antialiased}
+button,input,select{font:inherit}
+button{cursor:pointer}
+button:disabled{cursor:not-allowed;opacity:.55}
+input,select{min-width:0}
+#root{min-height:100vh}
+::-webkit-scrollbar{width:7px;height:7px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:#c9c5bd;border-radius:4px}
+:focus-visible{outline:2px solid var(--blue);outline-offset:2px}
+.app{max-width:1120px;margin:0 auto;padding:18px 16px 28px}
+.topbar{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px}
+.brand{display:flex;flex-direction:column;gap:1px}
+.brand h1{font-size:22px;font-weight:650;letter-spacing:0}
+.brand p{font-size:12px;color:var(--muted)}
+.top-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end}
+.nav{display:flex;gap:4px;border-bottom:1px solid var(--line-soft);margin-bottom:16px;overflow-x:auto;scrollbar-width:none}
+.nav::-webkit-scrollbar{display:none}
+.nav button{border:0;border-bottom:2px solid transparent;background:transparent;color:var(--muted);font-size:13px;padding:8px 10px;margin-bottom:-1px;white-space:nowrap}
+.nav button.active{border-bottom-color:var(--blue);color:var(--blue);font-weight:650}
+.grid{display:grid;gap:12px}
+.grid.cols-2{grid-template-columns:repeat(2,minmax(0,1fr))}
+.grid.cols-3{grid-template-columns:repeat(3,minmax(0,1fr))}
+.grid.auto{grid-template-columns:repeat(auto-fit,minmax(220px,1fr))}
+.panel{background:var(--paper);border:1px solid var(--line-soft);border-radius:var(--radius);padding:16px;box-shadow:var(--shadow)}
+.panel.tight{padding:12px}
+.section-title{font-size:14px;font-weight:650;margin:0 0 12px;color:var(--text)}
+.metric{background:var(--paper);border:1px solid var(--line-soft);border-radius:var(--radius);padding:14px}
+.metric span{display:block;color:var(--muted);font-size:12px;margin-bottom:4px}
+.metric strong{display:block;font-size:20px;font-weight:650;letter-spacing:0}
+.muted{color:var(--muted)}
+.faint{color:var(--faint)}
+.pos{color:var(--green)}
+.neg{color:var(--red)}
+.warn{color:var(--amber)}
+.btn{border:1px solid var(--line);background:var(--paper);color:var(--text);border-radius:var(--radius);padding:8px 11px;font-size:13px;font-weight:600}
+.btn.primary{border-color:var(--blue);background:var(--blue);color:#fff}
+.btn.danger{border-color:#f1c7c7;background:#fff5f5;color:#b02828}
+.btn.ghost{background:transparent}
+.btn.small{padding:5px 8px;font-size:12px}
+.field label{display:block;font-size:12px;color:var(--muted);margin-bottom:5px}
+.input{width:100%;border:1px solid var(--line);background:var(--bg);color:var(--text);border-radius:var(--radius);padding:9px 10px;font-size:14px}
+.input.white{background:#fff}
+.row{display:flex;align-items:center;gap:8px}
+.row.wrap{flex-wrap:wrap}
+.row.between{justify-content:space-between}
+.chip{display:inline-flex;align-items:center;gap:6px;border-radius:999px;background:var(--soft);color:var(--muted);font-size:12px;padding:4px 9px}
+.chip.ok{background:#e1f5ee;color:#0f6e56}
+.chip.info{background:#e6f1fb;color:#185fa5}
+.chip.warn{background:#faeeda;color:#854f0b}
+.chip.bad{background:#fcebeb;color:#a32d2d}
+.list{background:var(--paper);border:1px solid var(--line-soft);border-radius:var(--radius);overflow:hidden}
+.tx{display:grid;grid-template-columns:auto minmax(0,1fr) auto auto auto;align-items:center;gap:9px;padding:11px 12px;border-bottom:1px solid var(--line-soft)}
+.tx:last-child{border-bottom:0}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--red)}
+.tx-title{display:flex;gap:6px;align-items:center;min-width:0}
+.tx-title p{font-size:14px;font-weight:650;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tx-sub{font-size:12px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.icon-btn{border:0;background:transparent;color:var(--faint);font-weight:700;padding:3px 4px;border-radius:6px}
+.card{border-radius:var(--radius);padding:16px;color:#fff;min-height:146px;display:flex;flex-direction:column;justify-content:space-between;box-shadow:var(--shadow)}
+.progress{height:7px;border-radius:999px;background:rgba(255,255,255,.25);overflow:hidden}
+.progress span{display:block;height:100%;border-radius:999px;background:rgba(255,255,255,.92)}
+.bar{height:8px;border-radius:999px;background:var(--soft);overflow:hidden}
+.bar span{display:block;height:100%;border-radius:999px}
+.filters{background:var(--paper);border:1px solid var(--line-soft);border-radius:var(--radius);padding:12px;margin-bottom:14px}
+.filters-grid{display:grid;grid-template-columns:2fr repeat(5,minmax(120px,1fr));gap:8px}
+.empty{border:1px dashed var(--line);border-radius:var(--radius);padding:20px;text-align:center;color:var(--muted);background:rgba(255,255,255,.5)}
+.alert-item{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:center;padding:9px 0;border-bottom:1px solid var(--line-soft)}
+.alert-item:last-child{border-bottom:0}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;background:#fff}
+.seg button{border:0;border-right:1px solid var(--line);background:#fff;padding:7px 10px;font-size:13px;color:var(--muted)}
+.seg button:last-child{border-right:0}
+.seg button.active{background:var(--blue);color:#fff}
+.footer-note{font-size:12px;color:var(--muted);margin-top:8px}
+@media (max-width:760px){
+  .app{padding:14px 12px 22px}
+  .topbar{align-items:flex-start;flex-direction:column}
+  .top-actions{width:100%;justify-content:stretch}
+  .top-actions .input{flex:1}
+  .grid.cols-2,.grid.cols-3{grid-template-columns:1fr}
+  .filters-grid{grid-template-columns:1fr}
+  .tx{grid-template-columns:auto minmax(0,1fr) auto;gap:8px}
+  .tx .amount{grid-column:2/3;text-align:left!important}
+  .tx .actions{grid-column:3/4;grid-row:1/3}
+  .hide-mobile{display:none}
+}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script id="app-data" type="application/json">{"txs":[],"cards":[],"settings":{}}</script>
+<script>
+const DEFAULT_CATEGORIES = {
+  despesa:["Alimentação","Moradia","Transporte","Saúde","Educação","Lazer","Vestuário","Assinaturas","Mercado","Outros"],
+  receita:["Salário","Freelance","Investimentos","Reembolso","Outros"],
+};
+const METHODS = ["Pix","Boleto","Transferência bancária","Dinheiro","Cartão de débito","Cartão de crédito"];
+const MONTHS = ["Janeiro","Fevereiro","Março","Abril","Maio","Junho","Julho","Agosto","Setembro","Outubro","Novembro","Dezembro"];
+const COLORS = ["#3266ad","#178566","#d84843","#b46d13","#c94b73","#7168d9","#5f8d24","#d35b2f"];
+const CARD_COLORS = ["#3266ad","#178566","#d35b2f","#7168d9","#c94b73","#9b6a16"];
+const STORAGE_KEY = "controle-financeiro-webplus:v1";
+const LEGACY_KEY = "controle-financeiro:v1";
+
+
+const fmt = value => Number(value || 0).toLocaleString("pt-BR",{style:"currency",currency:"BRL"});
+const fmtD = value => value ? new Date(value+"T12:00:00").toLocaleDateString("pt-BR") : "-";
+const today = () => new Date().toISOString().split("T")[0];
+const ym = date => String(date || today()).slice(0,7);
+const addM = (base,n) => {
+  const [y,m] = base.split("-").map(Number);
+  const d = new Date(y,m-1+n,1);
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`;
+};
+const addDays = (date, days) => {
+  const d = new Date(date+"T12:00:00");
+  d.setDate(d.getDate()+days);
+  return d.toISOString().split("T")[0];
+};
+const monthLabel = value => {
+  const [y,m] = value.split("-");
+  return `${MONTHS[Number(m)-1]} ${y}`;
+};
+const esc = value => String(value ?? "").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+
+const STATE = {
+  txs:[],
+  cards:[],
+  settings:defaultSettings(),
+  aba:"dashboard",
+  mesSel:today().slice(0,7),
+  consAnt:false,
+  editId:null,
+  cardEditId:null,
+  cardDetalhe:null,
+  showCardForm:false,
+  faturaOpen:{},
+  form:emptyForm(),
+  cardForm:emptyCardForm(),
+  categoryForm:{tipo:"despesa",nome:""},
+  filters:{q:"",tipo:"todos",status:"todos",categoria:"",metodo:"",cartao:"",mes:"todos"},
+  erro:"",
+  cardErro:"",
+  configMsg:"",
+  dirty:false,
+};
+
+function defaultSettings(){
+  return {
+    categories:JSON.parse(JSON.stringify(DEFAULT_CATEGORIES)),
+    dueDays:7,
+  };
+}
+
+function emptyForm(){
+  return {
+    tipo:"despesa",
+    desc:"",
+    valor:"",
+    categoria:"Alimentação",
+    data:today(),
+    dataVenc:"",
+    situacao:"a_pagar",
+    metodo:"Pix",
+    recorrente:false,
+    recorrMeses:6,
+    cartaoId:"",
+    parcelas:1,
+  };
+}
+
+function emptyCardForm(){
+  return {nome:"",diaFech:"",diaVenc:"",limite:""};
+}
+
+function toNumber(value){
+  if (typeof value === "number") return value;
+  let text = String(value ?? "").trim().replace(/[^\d,.-]/g,"");
+  if (!text) return NaN;
+  const lastComma = text.lastIndexOf(",");
+  const lastDot = text.lastIndexOf(".");
+  const decimalSep = lastComma > lastDot ? "," : (lastDot >= 0 ? "." : "");
+  if (decimalSep) {
+    const thousandsSep = decimalSep === "," ? "." : ",";
+    text = text.split(thousandsSep).join("").replace(decimalSep,".");
+  }
+  return Number(text.replace(/(?!^)-/g,""));
+}
+
+function toInt(value,fallback=0){
+  const n = parseInt(value,10);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+function roundMoney(value){
+  return Math.round((Number(value || 0)+Number.EPSILON)*100)/100;
+}
+
+function moneyFromDigits(value){
+  const digits = String(value ?? "").replace(/\D/g,"");
+  return digits ? fmt(Number(digits)/100) : "";
+}
+
+function moneyDisplay(value){
+  const n = toNumber(value);
+  return Number.isFinite(n) && n > 0 ? fmt(n) : "";
+}
+
+function handleMoneyInput(input,target,key="valor"){
+  const formatted = moneyFromDigits(input.value);
+  input.value = formatted;
+  target[key] = formatted;
+  input.setSelectionRange(input.value.length,input.value.length);
+}
+
+function makeId(prefix="id"){
+  return `${prefix}${Date.now().toString(36)}${Math.random().toString(36).slice(2,8)}`;
+}
+
+function nextTxId(txs){
+  return txs.reduce((max,t)=>Math.max(max,Number(t.id)||0),0)+1;
+}
+
+function normalizeTx(raw){
+  const id = Number(raw?.id);
+  if (!Number.isFinite(id)) return null;
+  const tipo = raw.tipo === "receita" ? "receita" : "despesa";
+  const valor = toNumber(raw.valor);
+  return {
+    id,
+    tipo,
+    desc:String(raw.desc || ""),
+    valor:Number.isFinite(valor) ? valor : 0,
+    categoria:raw.categoria || "Outros",
+    data:raw.data || today(),
+    dataVenc:raw.dataVenc || "",
+    situacao:raw.situacao || (tipo === "receita" ? "a_receber" : "a_pagar"),
+    metodo:raw.metodo || "Pix",
+    recorrGrupo:raw.recorrGrupo || "",
+    cartaoId:raw.cartaoId || "",
+    parcelaAtual:toInt(raw.parcelaAtual,0),
+    totalParcelas:toInt(raw.totalParcelas,0),
+    grupoParc:raw.grupoParc || "",
+    valorTotal:Number.isFinite(toNumber(raw.valorTotal)) ? toNumber(raw.valorTotal) : 0,
+  };
+}
+
+function normalizeCard(raw){
+  if (!raw?.id) return null;
+  return {
+    id:String(raw.id),
+    nome:String(raw.nome || ""),
+    diaFech:toInt(raw.diaFech,1),
+    diaVenc:toInt(raw.diaVenc,1),
+    limite:Number.isFinite(toNumber(raw.limite)) ? toNumber(raw.limite) : 0,
+  };
+}
+
+function normalizeSettings(raw){
+  const base = defaultSettings();
+  const categories = raw?.categories || {};
+  const despesa = Array.from(new Set([...(categories.despesa || []), ...DEFAULT_CATEGORIES.despesa])).filter(Boolean);
+  const receita = Array.from(new Set([...(categories.receita || []), ...DEFAULT_CATEGORIES.receita])).filter(Boolean);
+  return {
+    ...base,
+    ...raw,
+    dueDays:Math.max(1,Math.min(60,toInt(raw?.dueDays,7))),
+    categories:{despesa,receita},
+  };
+}
+
+function sortTxs(txs){
+  return txs.slice().sort((a,b)=>String(b.data).localeCompare(String(a.data)) || Number(b.id)-Number(a.id));
+}
+
+function readLocal(key){
+  try { return window.localStorage.getItem(key) || ""; }
+  catch (err) { return ""; }
+}
+
+function writeLocal(key,payload){
+  try { window.localStorage.setItem(key,JSON.stringify(payload)); }
+  catch (err) { console.warn("Não foi possível salvar no navegador.",err); }
+}
+
+function loadState(){
+  // Prioridade 1: dados embutidos no próprio arquivo
+  try {
+    const el = document.getElementById("app-data");
+    if (el) {
+      const raw = el.textContent.trim();
+      if (raw && raw !== '{"txs":[],"cards":[],"settings":{}}') {
+        const parsed = JSON.parse(raw);
+        if (parsed.txs || parsed.cards) {
+          return {
+            txs:sortTxs((parsed.txs||[]).map(normalizeTx).filter(Boolean)),
+            cards:(parsed.cards||[]).map(normalizeCard).filter(Boolean),
+            settings:normalizeSettings(parsed.settings),
+          };
+        }
+      }
+    }
+  } catch(e) {}
+  // Prioridade 2: localStorage (compatibilidade com versões anteriores)
+  const current = readLocal(STORAGE_KEY);
+  const raw = current || readLocal(LEGACY_KEY);
+  if (!raw) return {txs:[],cards:[],settings:defaultSettings()};
+  try {
+    const parsed = JSON.parse(raw);
+    const data = {
+      txs:sortTxs((parsed.txs||[]).map(normalizeTx).filter(Boolean)),
+      cards:(parsed.cards||[]).map(normalizeCard).filter(Boolean),
+      settings:normalizeSettings(parsed.settings),
+    };
+    if (!current) writeLocal(STORAGE_KEY,data);
+    return data;
+  } catch(e) {
+    return {txs:[],cards:[],settings:defaultSettings()};
+  }
+}
+
+function persist(){
+  const payload = {txs:sortTxs(STATE.txs),cards:STATE.cards,settings:STATE.settings};
+  writeLocal(STORAGE_KEY,payload);
+  STATE.dirty = true;
+}
+
+function faturaYM(dataCompra,diaFechamento){
+  const dia = Number(String(dataCompra).slice(8,10));
+  return dia <= diaFechamento ? ym(dataCompra) : addM(ym(dataCompra),1);
+}
+
+function getSit(t){
+  if (t.tipo === "receita") return t.situacao || "a_receber";
+  if (t.situacao === "pago") return "pago";
+  if (t.dataVenc && t.dataVenc < today()) return "vencido";
+  return t.situacao || "a_pagar";
+}
+
+function isDone(t){
+  const s = getSit(t);
+  return s === "pago" || s === "recebido";
+}
+
+function statusMeta(s){
+  return {
+    pago:["ok","Pago"],
+    recebido:["ok","Recebido"],
+    a_pagar:["info","A pagar"],
+    a_receber:["warn","A receber"],
+    vencido:["bad","Vencido"],
+  }[s] || ["",s];
+}
+
+function cardById(id){
+  return STATE.cards.find(c=>c.id === id) || null;
+}
+
+function cardName(id){
+  return cardById(id)?.nome || "Cartão removido";
+}
+
+function categoryList(tipo,selected=""){
+  const base = STATE.settings.categories[tipo] || DEFAULT_CATEGORIES[tipo];
+  return base.includes(selected) || !selected ? base : [selected,...base];
+}
+
+function calcDerived(){
+  const months = new Set(STATE.txs.map(t=>ym(t.data)));
+  months.add(STATE.mesSel);
+  const allMeses = Array.from(months).sort();
+
+  const faturasPorMesCartao = {};
+  STATE.txs.filter(t=>t.cartaoId).forEach(t=>{
+    const month = ym(t.data);
+    if (!faturasPorMesCartao[month]) faturasPorMesCartao[month] = {};
+    if (!faturasPorMesCartao[month][t.cartaoId]) faturasPorMesCartao[month][t.cartaoId] = [];
+    faturasPorMesCartao[month][t.cartaoId].push(t);
+  });
+
+  const saldoPorMes = {};
+  allMeses.forEach(month=>{
+    const normais = STATE.txs.filter(t=>ym(t.data) === month && !t.cartaoId);
+    const faturas = faturasPorMesCartao[month] || {};
+    let receitas=0,despesas=0,recTot=0,despTot=0;
+    normais.forEach(t=>{
+      if (t.tipo === "receita") { recTot += t.valor; if (isDone(t)) receitas += t.valor; }
+      else { despTot += t.valor; if (isDone(t)) despesas += t.valor; }
+    });
+    Object.values(faturas).forEach(arr=>{
+      const total = arr.reduce((s,t)=>s+t.valor,0);
+      const pago = arr.filter(isDone).reduce((s,t)=>s+t.valor,0);
+      despTot += total;
+      despesas += pago;
+    });
+    saldoPorMes[month] = {receitas,despesas,saldoMes:receitas-despesas,recTot,despTot};
+  });
+
+  const saldoAcum = {};
+  let acc = 0;
+  allMeses.forEach(month=>{
+    acc += saldoPorMes[month]?.saldoMes || 0;
+    saldoAcum[month] = acc;
+  });
+  const idx = allMeses.indexOf(STATE.mesSel);
+  const saldoAnt = idx > 0 ? saldoAcum[allMeses[idx-1]] || 0 : 0;
+  const base = saldoPorMes[STATE.mesSel] || {receitas:0,despesas:0,saldoMes:0,recTot:0,despTot:0};
+  const resumoMes = {...base,saldoFinal:STATE.consAnt ? base.saldoMes + saldoAnt : base.saldoMes};
+
+  const txsMes = STATE.txs.filter(t=>ym(t.data) === STATE.mesSel && !t.cartaoId).sort((a,b)=>b.data.localeCompare(a.data));
+  const faturasMes = faturasPorMesCartao[STATE.mesSel] || {};
+  const porCat = categoryTotals(STATE.txs.filter(t=>ym(t.data) === STATE.mesSel && t.tipo === "despesa" && isDone(t)));
+  const usoCartao = {};
+  STATE.cards.forEach(c=>{
+    usoCartao[c.id] = STATE.txs.filter(t=>t.cartaoId === c.id && !isDone(t)).reduce((s,t)=>s+t.valor,0);
+  });
+
+  return {allMeses,faturasPorMesCartao,saldoPorMes,saldoAcum,saldoAnt,resumoMes,txsMes,faturasMes,porCat,usoCartao};
+}
+
+function categoryTotals(txs){
+  const map = {};
+  txs.forEach(t=>{ map[t.categoria] = (map[t.categoria] || 0) + t.valor; });
+  return Object.entries(map).sort((a,b)=>b[1]-a[1]);
+}
+
+function filteredTxs(){
+  const f = STATE.filters;
+  const q = f.q.trim().toLowerCase();
+  return STATE.txs.filter(t=>{
+    if (q && !`${t.desc} ${t.categoria} ${t.metodo} ${cardName(t.cartaoId)}`.toLowerCase().includes(q)) return false;
+    if (f.mes !== "todos" && ym(t.data) !== f.mes) return false;
+    if (f.tipo !== "todos" && t.tipo !== f.tipo) return false;
+    if (f.status !== "todos" && getSit(t) !== f.status) return false;
+    if (f.categoria && t.categoria !== f.categoria) return false;
+    if (f.metodo && t.metodo !== f.metodo) return false;
+    if (f.cartao === "sem" && t.cartaoId) return false;
+    if (f.cartao && f.cartao !== "sem" && t.cartaoId !== f.cartao) return false;
+    return true;
+  });
+}
+
+function dueAlerts(){
+  const limit = addDays(today(),STATE.settings.dueDays);
+  return STATE.txs
+    .filter(t=>!isDone(t) && t.dataVenc && t.dataVenc <= limit)
+    .sort((a,b)=>a.dataVenc.localeCompare(b.dataVenc));
+}
+
+function render(){
+  const d = calcDerived();
+  if (STATE.cardDetalhe) {
+    renderCardDetail(d);
+    return;
+  }
+
+  const tabs = [
+    ["dashboard","Resumo"],
+    ["nova",STATE.editId ? "Editar" : "Nova transação"],
+    ["historico","Histórico"],
+    ["cartoes","Cartões"],
+    ["config","Configurações"],
+  ];
+  const monthOptions = d.allMeses.map(m=>`<option value="${m}" ${m === STATE.mesSel ? "selected" : ""}>${monthLabel(m)}</option>`).join("");
+  const nav = tabs.map(([id,label])=>`<button class="${STATE.aba === id ? "active" : ""}" onclick="setAba('${id}')">${label}</button>`).join("");
+  let body = "";
+  if (STATE.aba === "dashboard") body = renderDashboard(d);
+  if (STATE.aba === "historico") body = renderHistory(d);
+  if (STATE.aba === "cartoes") body = renderCards(d);
+  if (STATE.aba === "config") body = renderConfig();
+  if (STATE.aba === "nova") body = renderTxForm();
+
+  const dirtyDot = STATE.dirty
+    ? `<span style="width:8px;height:8px;border-radius:50%;background:#e8a000;display:inline-block;margin-right:4px;flex-shrink:0"></span>`
+    : "";
+  const saveLabel = FH.saving ? "Salvando…" : FH.linked ? "💾 Salvar" : "💾 Salvar arquivo";
+  const saveTitle = FH.linked ? "Salvar direto no arquivo" : "Clique para vincular o arquivo e salvar";
+  document.getElementById("root").innerHTML = `
+    <main class="app">
+      <header class="topbar">
+        <div class="brand">
+          <h1>Controle financeiro</h1>
+          <p>${monthLabel(STATE.mesSel)}</p>
+        </div>
+        <div class="top-actions">
+          <select class="input white" style="width:auto" onchange="STATE.mesSel=this.value;render()">${monthOptions}</select>
+          <button class="btn ${STATE.dirty ? "primary" : ""}" onclick="saveToFile()" ${FH.saving?"disabled":""} title="${saveTitle}">${dirtyDot}${saveLabel}</button>
+          <button class="btn primary" onclick="setAba('nova')">Nova transação</button>
+        </div>
+      </header>
+      <nav class="nav">${nav}</nav>
+      ${body}
+    </main>`;
+}
+
+function renderDashboard(d){
+  const r = d.resumoMes;
+  const alerts = dueAlerts();
+  const alertHtml = alerts.length ? `
+    <section class="panel">
+      <div class="row between">
+        <h2 class="section-title">Vencimentos</h2>
+        <span class="chip warn">${alerts.length} pendente${alerts.length === 1 ? "" : "s"}</span>
+      </div>
+      ${alerts.slice(0,6).map(t=>{
+        const overdue = t.dataVenc < today();
+        return `<div class="alert-item">
+          <div>
+            <strong style="font-size:13px">${esc(t.desc)}</strong>
+            <p class="muted" style="font-size:12px">${esc(t.categoria)} · ${esc(t.metodo)} · vence ${fmtD(t.dataVenc)}</p>
+          </div>
+          <span class="chip ${overdue ? "bad" : "warn"}">${overdue ? "Vencido" : fmt(t.valor)}</span>
+        </div>`;
+      }).join("")}
+    </section>` : "";
+  const saldoAnt = STATE.consAnt && d.saldoAnt !== 0 ? ` ${fmt(d.saldoAnt)}` : "";
+  const cats = d.porCat;
+  const max = cats[0]?.[1] || 1;
+
+  // Reports data
+  const months = d.allMeses.slice(-8);
+  const maxMonthly = Math.max(1,...months.map(m=>Math.max(d.saldoPorMes[m]?.recTot || 0,d.saldoPorMes[m]?.despTot || 0)));
+  const expensesMonth = STATE.txs.filter(t=>ym(t.data) === STATE.mesSel && t.tipo === "despesa");
+  const byCat = categoryTotals(expensesMonth);
+  const top = expensesMonth.slice().sort((a,b)=>b.valor-a.valor).slice(0,6);
+  const cardRows = STATE.cards.map((c,i)=>{
+    const usage = d.usoCartao[c.id] || 0;
+    const pct = c.limite ? Math.min(1,usage/c.limite) : 0;
+    return barLine(c.nome,usage,pct,CARD_COLORS[i % CARD_COLORS.length]);
+  }).join("");
+
+  return `
+    <div class="row wrap" style="margin-bottom:12px">
+      <label class="chip" style="cursor:pointer"><input type="checkbox" ${STATE.consAnt ? "checked" : ""} onchange="STATE.consAnt=this.checked;render()"/> Considerar saldo anterior${saldoAnt}</label>
+      <span class="chip">Pagos e recebidos no saldo efetivo</span>
+    </div>
+    <section class="grid cols-3" style="margin-bottom:12px">
+      ${metric("Saldo efetivo",r.saldoFinal,r.saldoFinal >= 0 ? "pos" : "neg")}
+      ${metric("Recebido",r.receitas,"pos")}
+      ${metric("Pago",r.despesas,"neg")}
+    </section>
+    <section class="grid cols-2" style="margin-bottom:12px">
+      ${metric("Receita prevista",r.recTot,"pos")}
+      ${metric("Despesa prevista",r.despTot,"neg")}
+    </section>
+    <div class="grid cols-2" style="margin-bottom:12px">
+      ${alertHtml}
+      <section class="panel">
+        <h2 class="section-title">Despesas pagas por categoria</h2>
+        ${cats.length ? cats.map(([cat,val],i)=>barLine(cat,val,val/max,COLORS[i%COLORS.length])).join("") : empty("Nenhuma despesa paga neste mês.")}
+      </section>
+    </div>
+    <div class="grid cols-2">
+      <section class="panel">
+        <h2 class="section-title">Evolução mensal</h2>
+        ${months.map(m=>{
+          const row = d.saldoPorMes[m] || {recTot:0,despTot:0,saldoMes:0};
+          return `<div style="margin-bottom:14px">
+            <div class="row between" style="font-size:13px;margin-bottom:6px"><strong>${monthLabel(m)}</strong><span class="${row.saldoMes >= 0 ? "pos" : "neg"}">${fmt(row.saldoMes)}</span></div>
+            <div class="grid cols-2" style="gap:6px">
+              <div class="bar"><span style="width:${Math.max(3,row.recTot/maxMonthly*100)}%;background:var(--green)"></span></div>
+              <div class="bar"><span style="width:${Math.max(3,row.despTot/maxMonthly*100)}%;background:var(--red)"></span></div>
+            </div>
+          </div>`;
+        }).join("")}
+      </section>
+      <section class="panel">
+        <h2 class="section-title">Categorias do mês</h2>
+        ${byCat.length ? byCat.map(([cat,val],i)=>barLine(cat,val,val/(byCat[0][1] || 1),COLORS[i%COLORS.length])).join("") : empty("Sem despesas neste mês.")}
+      </section>
+      <section class="panel">
+        <h2 class="section-title">Uso por cartão</h2>
+        ${cardRows || empty("Nenhum cartão cadastrado.")}
+      </section>
+      <section class="panel">
+        <h2 class="section-title">Maiores despesas</h2>
+        ${top.length ? `<div class="list">${top.map(t=>renderTxRow(t,true)).join("")}</div>` : empty("Sem despesas neste mês.")}
+      </section>
+    </div>`;
+}
+
+function metric(label,value,colorClass){
+  return `<div class="metric"><span>${label}</span><strong class="${colorClass}">${fmt(value)}</strong></div>`;
+}
+
+function barLine(label,value,pct,color){
+  return `<div style="margin-bottom:11px">
+    <div class="row between" style="font-size:13px;margin-bottom:5px"><span class="muted">${esc(label)}</span><strong>${fmt(value)}</strong></div>
+    <div class="bar"><span style="width:${Math.max(4,Math.round(pct*100))}%;background:${color}"></span></div>
+  </div>`;
+}
+
+function empty(text){
+  return `<div class="empty">${esc(text)}</div>`;
+}
+
+function renderHistory(d){
+  const txs = filteredTxs();
+  const months = Array.from(new Set(txs.map(t=>ym(t.data)))).sort().reverse();
+  const cats = Array.from(new Set([...STATE.settings.categories.despesa,...STATE.settings.categories.receita])).sort();
+  const monthOpts = ["todos",...d.allMeses.slice().reverse()].map(m=>`<option value="${m}" ${STATE.filters.mes === m ? "selected" : ""}>${m === "todos" ? "Todos os meses" : monthLabel(m)}</option>`).join("");
+  const statusOpts = [["todos","Todos"],["pago","Pago"],["a_pagar","A pagar"],["vencido","Vencido"],["recebido","Recebido"],["a_receber","A receber"]];
+  const filters = `
+    <section class="filters">
+      <div class="filters-grid">
+        <input class="input" placeholder="Buscar" value="${esc(STATE.filters.q)}" oninput="STATE.filters.q=this.value;render()"/>
+        <select class="input" onchange="STATE.filters.mes=this.value;render()">${monthOpts}</select>
+        <select class="input" onchange="STATE.filters.tipo=this.value;render()">
+          ${[["todos","Todos"],["despesa","Despesa"],["receita","Receita"]].map(([v,l])=>`<option value="${v}" ${STATE.filters.tipo===v?"selected":""}>${l}</option>`).join("")}
+        </select>
+        <select class="input" onchange="STATE.filters.status=this.value;render()">
+          ${statusOpts.map(([v,l])=>`<option value="${v}" ${STATE.filters.status===v?"selected":""}>${l}</option>`).join("")}
+        </select>
+        <select class="input" onchange="STATE.filters.categoria=this.value;render()">
+          <option value="">Categorias</option>${cats.map(c=>`<option value="${esc(c)}" ${STATE.filters.categoria===c?"selected":""}>${esc(c)}</option>`).join("")}
+        </select>
+        <select class="input" onchange="STATE.filters.cartao=this.value;render()">
+          <option value="">Cartões</option><option value="sem" ${STATE.filters.cartao==="sem"?"selected":""}>Sem cartão</option>${STATE.cards.map(c=>`<option value="${c.id}" ${STATE.filters.cartao===c.id?"selected":""}>${esc(c.nome)}</option>`).join("")}
+        </select>
+      </div>
+      <div class="row between wrap" style="margin-top:8px">
+        <select class="input" style="max-width:220px" onchange="STATE.filters.metodo=this.value;render()">
+          <option value="">Métodos</option>${METHODS.map(m=>`<option value="${m}" ${STATE.filters.metodo===m?"selected":""}>${m}</option>`).join("")}
+        </select>
+        <button class="btn small ghost" onclick="clearFilters()">Limpar filtros</button>
+      </div>
+    </section>`;
+  const html = months.length ? months.map(month=>{
+    const monthTxs = txs.filter(t=>ym(t.data) === month);
+    const normal = monthTxs.filter(t=>!t.cartaoId).sort((a,b)=>b.data.localeCompare(a.data));
+    const groupedCards = {};
+    monthTxs.filter(t=>t.cartaoId).forEach(t=>{
+      if (!groupedCards[t.cartaoId]) groupedCards[t.cartaoId] = [];
+      groupedCards[t.cartaoId].push(t);
+    });
+    const totalRec = monthTxs.filter(t=>t.tipo === "receita" && isDone(t)).reduce((s,t)=>s+t.valor,0);
+    const totalDesp = monthTxs.filter(t=>t.tipo === "despesa" && isDone(t)).reduce((s,t)=>s+t.valor,0);
+    return `<section style="margin-bottom:18px">
+      <div class="row between" style="margin-bottom:7px">
+        <h2 class="section-title" style="margin:0">${monthLabel(month)}</h2>
+        <div class="row hide-mobile" style="font-size:13px"><span class="pos">+${fmt(totalRec)}</span><span class="neg">-${fmt(totalDesp)}</span></div>
+      </div>
+      ${Object.entries(groupedCards).map(([cardId,arr])=>renderFaturaRow(cardId,month,arr)).join("")}
+      ${normal.length ? `<div class="list">${normal.map(t=>renderTxRow(t,true)).join("")}</div>` : ""}
+    </section>`;
+  }).join("") : empty("Nenhum lançamento encontrado.");
+  return filters + html;
+}
+
+function renderTxRow(t,showCard=false){
+  const sit = getSit(t);
+  const [statusClass,statusLabel] = statusMeta(sit);
+  const color = t.tipo === "receita" ? "var(--green)" : "var(--red)";
+  const sign = t.tipo === "receita" ? "+" : "-";
+  const parcela = t.totalParcelas > 1 ? ` ${t.parcelaAtual}/${t.totalParcelas}x` : "";
+  const cardTag = showCard && t.cartaoId ? `<span class="chip info">${esc(cardName(t.cartaoId))}</span>` : "";
+  const due = t.dataVenc ? ` · vence ${fmtD(t.dataVenc)}` : "";
+  return `<div class="tx">
+    <span class="dot" style="background:${color}"></span>
+    <div style="min-width:0">
+      <div class="tx-title"><p>${esc(t.desc)}${parcela}</p>${t.recorrGrupo ? `<span class="chip">recorrente</span>` : ""}${cardTag}</div>
+      <div class="tx-sub">${esc(t.categoria)} · ${esc(t.metodo)} · ${fmtD(t.data)}${due}</div>
+    </div>
+    <span class="chip ${statusClass}" onclick="toggleSit(${t.id})">${statusLabel}</span>
+    <strong class="amount" style="color:${color};text-align:right;min-width:92px">${sign}${fmt(t.valor)}</strong>
+    <span class="actions row">
+      <button class="icon-btn" title="Editar" onclick="startEdit(${t.id})">Editar</button>
+      <button class="icon-btn" title="Excluir" onclick="deleteTx(${t.id})">Excluir</button>
+    </span>
+  </div>`;
+}
+
+function renderFaturaRow(cardId,month,arr){
+  const card = cardById(cardId);
+  const total = arr.reduce((s,t)=>s+t.valor,0);
+  const allPaid = arr.every(isDone);
+  const somePaid = arr.some(isDone);
+  const key = `${cardId}_${month}`;
+  const open = STATE.faturaOpen[key];
+  const status = allPaid ? ["ok","Pago"] : (somePaid ? ["info","Parcial"] : ["info","A pagar"]);
+  return `<div class="panel tight" style="margin-bottom:8px">
+    <div class="row between wrap" onclick="toggleFatura('${cardId}','${month}')" style="cursor:pointer">
+      <div>
+        <strong>Fatura ${esc(cardName(cardId))}</strong>
+        <p class="muted" style="font-size:12px">${arr.length} compra${arr.length === 1 ? "" : "s"}${card ? ` · vence dia ${card.diaVenc}` : ""}</p>
+      </div>
+      <div class="row wrap">
+        ${allPaid ? "" : `<button class="btn small" onclick="event.stopPropagation();pagarFatura('${cardId}','${month}')">Pagar tudo</button>`}
+        <span class="chip ${status[0]}">${status[1]}</span>
+        <strong class="neg">-${fmt(total)}</strong>
+      </div>
+    </div>
+    ${open ? `<div class="list" style="margin-top:10px">${arr.map(t=>renderTxRow(t,false)).join("")}</div>` : ""}
+  </div>`;
+}
+
+function renderCards(d){
+  const cards = STATE.cards.map((card,idx)=>{
+    const usage = d.usoCartao[card.id] || 0;
+    const pct = card.limite > 0 ? Math.min(100,Math.round((usage/card.limite)*100)) : 0;
+    const color = CARD_COLORS[idx % CARD_COLORS.length];
+    return `<article class="card" style="background:${color}" onclick="STATE.cardDetalhe='${card.id}';render()">
+      <div>
+        <div class="row between">
+          <h2 style="font-size:17px;font-weight:650">${esc(card.nome)}</h2>
+          <span class="row">
+            <button class="btn small" onclick="event.stopPropagation();startCardEdit('${card.id}')">Editar</button>
+            <button class="btn small" onclick="event.stopPropagation();deleteCard('${card.id}')">Excluir</button>
+          </span>
+        </div>
+        <p style="font-size:12px;opacity:.84;margin-top:2px">Fecha dia ${card.diaFech} · vence dia ${card.diaVenc}</p>
+      </div>
+      <div>
+        <div class="progress"><span style="width:${pct}%"></span></div>
+        <div class="row between" style="font-size:12px;margin-top:7px"><span>${fmt(usage)} usado</span><span>${fmt(card.limite)}</span></div>
+      </div>
+    </article>`;
+  }).join("");
+  const form = STATE.showCardForm ? renderCardForm() : "";
+  return `<div class="grid auto" style="margin-bottom:12px">
+    ${cards}
+    <button class="panel" style="min-height:146px;border-style:dashed;color:var(--muted);font-weight:650" onclick="startCardAdd()">Adicionar cartão</button>
+  </div>${form}`;
+}
+
+function renderCardForm(){
+  const title = STATE.cardEditId ? "Editar cartão" : "Novo cartão";
+  return `<section class="panel">
+    <h2 class="section-title">${title}</h2>
+    <div class="grid cols-2">
+      <div class="field"><label>Nome</label><input class="input" value="${esc(STATE.cardForm.nome)}" placeholder="Ex: Nubank" oninput="STATE.cardForm.nome=this.value"/></div>
+      <div class="field"><label>Limite</label><input class="input" inputmode="numeric" placeholder="R$ 0,00" value="${esc(moneyDisplay(STATE.cardForm.limite))}" oninput="handleMoneyInput(this, STATE.cardForm, 'limite')"/></div>
+      <div class="field"><label>Dia de fechamento</label><input class="input" type="number" min="1" max="31" value="${esc(STATE.cardForm.diaFech)}" oninput="STATE.cardForm.diaFech=this.value"/></div>
+      <div class="field"><label>Dia de vencimento</label><input class="input" type="number" min="1" max="31" value="${esc(STATE.cardForm.diaVenc)}" oninput="STATE.cardForm.diaVenc=this.value"/></div>
+    </div>
+    ${STATE.cardErro ? `<p class="neg" style="font-size:13px;margin-top:10px">${esc(STATE.cardErro)}</p>` : ""}
+    <div class="row" style="margin-top:12px">
+      <button class="btn ghost" onclick="cancelCardForm()">Cancelar</button>
+      <button class="btn primary" onclick="saveCard()">Salvar cartão</button>
+    </div>
+  </section>`;
+}
+
+function renderCardDetail(d){
+  const card = cardById(STATE.cardDetalhe);
+  if (!card) { STATE.cardDetalhe = null; render(); return; }
+  const txs = STATE.txs.filter(t=>t.cartaoId === card.id).sort((a,b)=>b.data.localeCompare(a.data));
+  const grouped = {};
+  txs.forEach(t=>{ const month = ym(t.data); if (!grouped[month]) grouped[month] = []; grouped[month].push(t); });
+  const usage = d.usoCartao[card.id] || 0;
+  const pct = card.limite > 0 ? Math.min(100,Math.round((usage/card.limite)*100)) : 0;
+  const idx = STATE.cards.findIndex(c=>c.id === card.id);
+  const color = CARD_COLORS[idx % CARD_COLORS.length];
+  document.getElementById("root").innerHTML = `<main class="app">
+    <button class="btn ghost" onclick="STATE.cardDetalhe=null;render()" style="margin-bottom:12px">Voltar</button>
+    <section class="card" style="background:${color};margin-bottom:16px">
+      <div>
+        <h1 style="font-size:22px">${esc(card.nome)}</h1>
+        <p style="font-size:13px;opacity:.86">Fecha dia ${card.diaFech} · vence dia ${card.diaVenc}</p>
+      </div>
+      <div>
+        <div class="progress"><span style="width:${pct}%"></span></div>
+        <div class="row between" style="font-size:13px;margin-top:8px"><span>${fmt(usage)} usado</span><span>Limite ${fmt(card.limite)}</span></div>
+      </div>
+    </section>
+    ${Object.keys(grouped).sort().reverse().map(month=>renderFaturaRow(card.id,month,grouped[month])).join("") || empty("Nenhuma fatura neste cartão.")}
+  </main>`;
+}
+
+
+function renderConfig(){
+  const settings = STATE.settings;
+  return `<div class="grid cols-2">
+    <section class="panel">
+      <h2 class="section-title">Categorias</h2>
+      ${renderCategoryManager("despesa","Despesas")}
+      ${renderCategoryManager("receita","Receitas")}
+    </section>
+    <section class="panel">
+      <h2 class="section-title">Preferências</h2>
+      <div class="field">
+        <label>Dias para aviso de vencimento</label>
+        <input class="input" type="number" min="1" max="60" value="${settings.dueDays}" onchange="settingsDueDays(this.value)"/>
+      </div>
+      <div style="height:18px"></div>
+      <button class="btn danger" onclick="clearAllData()">Limpar todos os dados</button>
+      ${STATE.configMsg ? `<p class="footer-note">${esc(STATE.configMsg)}</p>` : ""}
+    </section>
+  </div>`;
+}
+
+function renderCategoryManager(tipo,label){
+  const cats = STATE.settings.categories[tipo] || [];
+  return `<div style="margin-bottom:16px">
+    <div class="row between" style="margin-bottom:8px">
+      <strong>${label}</strong>
+      <button class="btn small ${STATE.categoryForm.tipo === tipo ? "primary" : ""}" onclick="STATE.categoryForm.tipo='${tipo}';render()">Selecionar</button>
+    </div>
+    <div class="row wrap" style="margin-bottom:8px">
+      ${cats.map(cat=>`<span class="chip">${esc(cat)} <button class="icon-btn" onclick="removeCategory('${tipo}','${esc(cat)}')">x</button></span>`).join("")}
+    </div>
+    ${STATE.categoryForm.tipo === tipo ? `<div class="row"><input class="input" placeholder="Nova categoria" value="${esc(STATE.categoryForm.nome)}" oninput="STATE.categoryForm.nome=this.value"/><button class="btn primary" onclick="addCategory()">Adicionar</button></div>` : ""}
+  </div>`;
+}
+
+function renderTxForm(){
+  const form = STATE.form;
+  const isCard = form.metodo === "Cartão de crédito";
+  const cats = categoryList(form.tipo,form.categoria);
+  const methods = form.tipo === "receita" ? METHODS.filter(m=>!m.includes("Cartão")) : METHODS;
+  const value = toNumber(form.valor);
+  const parcels = Array.from({length:24},(_,i)=>i+1).map(n=>{
+    const label = n > 1 && Number.isFinite(value) && value > 0 ? ` de ${fmt(value/n)}` : "";
+    return `<option value="${n}" ${form.parcelas == n ? "selected" : ""}>${n}x${label}</option>`;
+  }).join("");
+  let preview = "";
+  if (isCard && form.cartaoId && form.data) {
+    const card = cardById(form.cartaoId);
+    if (card) preview = `<p class="footer-note">Fatura de ${monthLabel(faturaYM(form.data,card.diaFech))} · vence dia ${card.diaVenc}</p>`;
+  }
+  return `<section class="panel">
+    <div class="seg" style="margin-bottom:14px">
+      <button class="${form.tipo === "despesa" ? "active" : ""}" onclick="setTipo('despesa')">Despesa</button>
+      <button class="${form.tipo === "receita" ? "active" : ""}" onclick="setTipo('receita')">Receita</button>
+    </div>
+    <div class="grid cols-2">
+      <div class="field" style="grid-column:1/-1"><label>Descrição</label><input class="input" placeholder="Ex: Aluguel, Salário..." value="${esc(form.desc)}" oninput="STATE.form.desc=this.value"/></div>
+      <div class="field"><label>Valor</label><input class="input" inputmode="numeric" placeholder="R$ 0,00" value="${esc(moneyDisplay(form.valor))}" oninput="handleMoneyInput(this, STATE.form)"/></div>
+      <div class="field"><label>Data</label><input class="input" type="date" value="${form.data}" oninput="STATE.form.data=this.value" onchange="STATE.form.data=this.value;render()"/></div>
+      <div class="field"><label>Categoria</label><select class="input" onchange="STATE.form.categoria=this.value">${cats.map(c=>`<option value="${esc(c)}" ${form.categoria===c?"selected":""}>${esc(c)}</option>`).join("")}</select></div>
+      <div class="field"><label>Método</label><select class="input" onchange="STATE.form.metodo=this.value;STATE.form.cartaoId='';STATE.form.parcelas=1;render()">${methods.map(m=>`<option value="${m}" ${form.metodo===m?"selected":""}>${m}</option>`).join("")}</select></div>
+    </div>
+    ${isCard ? `<div class="panel tight" style="margin-top:12px;background:var(--bg)">
+      <div class="grid cols-2">
+        <div class="field"><label>Cartão</label><select class="input white" onchange="STATE.form.cartaoId=this.value;render()"><option value="">Selecione</option>${STATE.cards.map(c=>`<option value="${c.id}" ${form.cartaoId===c.id?"selected":""}>${esc(c.nome)}</option>`).join("")}</select></div>
+        <div class="field"><label>Parcelas</label><select class="input white" onchange="STATE.form.parcelas=parseInt(this.value);render()">${parcels}</select></div>
+      </div>${preview}
+    </div>` : `<div class="grid cols-2" style="margin-top:12px">
+      <div class="field"><label>Situação</label><select class="input" onchange="STATE.form.situacao=this.value">${form.tipo === "receita" ? `<option value="a_receber" ${form.situacao==="a_receber"?"selected":""}>A receber</option><option value="recebido" ${form.situacao==="recebido"?"selected":""}>Recebido</option>` : `<option value="a_pagar" ${form.situacao==="a_pagar"?"selected":""}>A pagar</option><option value="pago" ${form.situacao==="pago"?"selected":""}>Pago</option>`}</select></div>
+      <div class="field"><label>Vencimento</label><input class="input" type="date" value="${form.dataVenc}" oninput="STATE.form.dataVenc=this.value"/></div>
+    </div>`}
+    ${!STATE.editId && !isCard ? `<div class="panel tight" style="margin-top:12px;background:var(--bg)">
+      <label class="row" style="font-weight:650"><input type="checkbox" ${form.recorrente ? "checked" : ""} onchange="STATE.form.recorrente=this.checked;render()"/> Lançamento recorrente</label>
+      ${form.recorrente ? `<div class="row wrap" style="margin-top:10px">${[3,6,12,24].map(n=>`<button class="btn small ${form.recorrMeses===n?"primary":""}" onclick="STATE.form.recorrMeses=${n};render()">${n} meses</button>`).join("")}</div>` : ""}
+    </div>` : ""}
+    ${STATE.erro ? `<p class="neg" style="font-size:13px;margin-top:10px">${esc(STATE.erro)}</p>` : ""}
+    <div class="row" style="margin-top:14px">
+      ${STATE.editId ? `<button class="btn ghost" onclick="cancelEdit()">Cancelar</button>` : ""}
+      <button class="btn primary" onclick="saveTx()">${STATE.editId ? "Salvar alterações" : isCard ? `Lançar ${form.parcelas}x` : form.recorrente ? `Criar ${form.recorrMeses} lançamentos` : "Adicionar"}</button>
+    </div>
+  </section>`;
+}
+
+function setAba(id){
+  STATE.aba = id;
+  if (id !== "nova") { STATE.editId = null; STATE.form = emptyForm(); STATE.erro = ""; }
+  render();
+}
+
+function setTipo(tipo){
+  STATE.form = {
+    ...STATE.form,
+    tipo,
+    categoria:categoryList(tipo)[0],
+    situacao:tipo === "receita" ? "a_receber" : "a_pagar",
+    metodo:"Pix",
+    cartaoId:"",
+    parcelas:1,
+  };
+  render();
+}
+
+function saveTx(){
+  const form = STATE.form;
+  const desc = form.desc.trim();
+  const valor = toNumber(form.valor);
+  if (!desc) { STATE.erro = "Informe uma descrição."; render(); return; }
+  if (!Number.isFinite(valor) || valor <= 0) { STATE.erro = "Informe um valor válido."; render(); return; }
+  if (!form.data) { STATE.erro = "Informe uma data."; render(); return; }
+  if (form.metodo === "Cartão de crédito" && !form.cartaoId) { STATE.erro = "Selecione o cartão."; render(); return; }
+
+  if (STATE.editId) {
+    const idx = STATE.txs.findIndex(t=>t.id === STATE.editId);
+    if (idx >= 0) STATE.txs[idx] = normalizeTx({...STATE.txs[idx],...form,desc,valor,id:STATE.editId});
+  } else {
+    addTxsFromForm({...form,desc,valor});
+  }
+  STATE.txs = sortTxs(STATE.txs);
+  persist();
+  STATE.form = emptyForm();
+  STATE.editId = null;
+  STATE.erro = "";
+  STATE.aba = "dashboard";
+  render();
+}
+
+function addTxsFromForm(form){
+  let id = nextTxId(STATE.txs);
+  if (form.metodo === "Cartão de crédito") {
+    const card = cardById(form.cartaoId);
+    const parcelas = Math.max(1,toInt(form.parcelas,1));
+    const valorParcela = roundMoney(form.valor / parcelas);
+    const base = faturaYM(form.data,card.diaFech);
+    const grupo = makeId("p");
+    for (let i=0;i<parcelas;i++) {
+      const month = addM(base,i);
+      STATE.txs.push({
+        id:id++,
+        tipo:"despesa",
+        desc:form.desc,
+        valor:valorParcela,
+        categoria:form.categoria,
+        data:`${month}-01`,
+        dataVenc:`${month}-${String(card.diaVenc).padStart(2,"0")}`,
+        situacao:i === 0 ? form.situacao || "a_pagar" : "a_pagar",
+        metodo:"Cartão de crédito",
+        cartaoId:form.cartaoId,
+        parcelaAtual:i+1,
+        totalParcelas:parcelas,
+        grupoParc:grupo,
+        valorTotal:form.valor,
+        recorrGrupo:"",
+      });
+    }
+    return;
+  }
+  if (form.recorrente) {
+    const grupo = makeId("g");
+    const day = form.data.slice(8,10);
+    const base = ym(form.data);
+    const months = Math.max(1,toInt(form.recorrMeses,6));
+    for (let i=0;i<months;i++) {
+      const month = addM(base,i);
+      STATE.txs.push({
+        id:id++,
+        tipo:form.tipo,
+        desc:form.desc,
+        valor:form.valor,
+        categoria:form.categoria,
+        data:`${month}-${day}`,
+        dataVenc:form.dataVenc ? `${month}-${form.dataVenc.slice(8,10)}` : "",
+        situacao:i === 0 ? form.situacao : (form.tipo === "receita" ? "a_receber" : "a_pagar"),
+        metodo:form.metodo,
+        recorrGrupo:grupo,
+        cartaoId:"",
+        parcelaAtual:0,
+        totalParcelas:0,
+        grupoParc:"",
+        valorTotal:0,
+      });
+    }
+    return;
+  }
+  STATE.txs.push(normalizeTx({
+    id,
+    tipo:form.tipo,
+    desc:form.desc,
+    valor:form.valor,
+    categoria:form.categoria,
+    data:form.data,
+    dataVenc:form.dataVenc,
+    situacao:form.situacao,
+    metodo:form.metodo,
+  }));
+}
+
+function startEdit(id){
+  const tx = STATE.txs.find(t=>t.id === id);
+  if (!tx) return;
+  STATE.form = {
+    tipo:tx.tipo,
+    desc:tx.desc,
+    valor:moneyDisplay(tx.valor),
+    categoria:tx.categoria,
+    data:tx.data,
+    dataVenc:tx.dataVenc,
+    situacao:tx.situacao,
+    metodo:tx.metodo,
+    recorrente:false,
+    recorrMeses:6,
+    cartaoId:tx.cartaoId,
+    parcelas:tx.totalParcelas || 1,
+  };
+  STATE.editId = id;
+  STATE.aba = "nova";
+  render();
+}
+
+function cancelEdit(){
+  STATE.editId = null;
+  STATE.form = emptyForm();
+  STATE.erro = "";
+  STATE.aba = "dashboard";
+  render();
+}
+
+function deleteTx(id){
+  if (!confirm("Excluir este lançamento?")) return;
+  STATE.txs = STATE.txs.filter(t=>t.id !== id);
+  persist();
+  render();
+}
+
+function toggleSit(id){
+  const tx = STATE.txs.find(t=>t.id === id);
+  if (!tx) return;
+  const sit = getSit(tx);
+  tx.situacao = tx.tipo === "receita" ? (sit === "recebido" ? "a_receber" : "recebido") : (sit === "pago" ? "a_pagar" : "pago");
+  persist();
+  render();
+}
+
+function pagarFatura(cardId,month){
+  STATE.txs.forEach(t=>{ if (t.cartaoId === cardId && ym(t.data) === month) t.situacao = "pago"; });
+  persist();
+  render();
+}
+
+function toggleFatura(cardId,month){
+  const key = `${cardId}_${month}`;
+  STATE.faturaOpen[key] = !STATE.faturaOpen[key];
+  render();
+}
+
+function startCardAdd(){
+  STATE.cardEditId = null;
+  STATE.cardForm = emptyCardForm();
+  STATE.cardErro = "";
+  STATE.showCardForm = true;
+  render();
+}
+
+function startCardEdit(id){
+  const card = cardById(id);
+  if (!card) return;
+  STATE.cardEditId = id;
+  STATE.cardForm = {...card,limite:moneyDisplay(card.limite)};
+  STATE.cardErro = "";
+  STATE.showCardForm = true;
+  STATE.aba = "cartoes";
+  render();
+}
+
+function cancelCardForm(){
+  STATE.cardEditId = null;
+  STATE.cardForm = emptyCardForm();
+  STATE.cardErro = "";
+  STATE.showCardForm = false;
+  render();
+}
+
+function saveCard(){
+  const f = STATE.cardForm;
+  const nome = f.nome.trim();
+  const diaFech = toInt(f.diaFech);
+  const diaVenc = toInt(f.diaVenc);
+  const limite = toNumber(f.limite);
+  if (!nome) { STATE.cardErro = "Informe o nome."; render(); return; }
+  if (diaFech < 1 || diaFech > 31 || diaVenc < 1 || diaVenc > 31 || !Number.isFinite(limite) || limite <= 0) {
+    STATE.cardErro = "Preencha fechamento, vencimento e limite corretamente.";
+    render();
+    return;
+  }
+  const card = {id:STATE.cardEditId || makeId("c"),nome,diaFech,diaVenc,limite};
+  if (STATE.cardEditId) {
+    const idx = STATE.cards.findIndex(c=>c.id === STATE.cardEditId);
+    if (idx >= 0) STATE.cards[idx] = card;
+  } else {
+    STATE.cards.push(card);
+  }
+  persist();
+  cancelCardForm();
+}
+
+function deleteCard(id){
+  if (!confirm("Excluir este cartão? As transações antigas ficam preservadas.")) return;
+  STATE.cards = STATE.cards.filter(c=>c.id !== id);
+  if (STATE.cardDetalhe === id) STATE.cardDetalhe = null;
+  persist();
+  render();
+}
+
+function clearFilters(){
+  STATE.filters = {q:"",tipo:"todos",status:"todos",categoria:"",metodo:"",cartao:"",mes:"todos"};
+  render();
+}
+
+function addCategory(){
+  const tipo = STATE.categoryForm.tipo;
+  const nome = STATE.categoryForm.nome.trim();
+  if (!nome) return;
+  const list = STATE.settings.categories[tipo];
+  if (!list.some(c=>c.toLowerCase() === nome.toLowerCase())) list.push(nome);
+  STATE.categoryForm.nome = "";
+  persist();
+  render();
+}
+
+function removeCategory(tipo,nome){
+  if (!confirm("Remover esta categoria da lista? Lançamentos antigos continuam com o mesmo nome.")) return;
+  STATE.settings.categories[tipo] = STATE.settings.categories[tipo].filter(c=>c !== nome);
+  persist();
+  render();
+}
+
+function settingsDueDays(value){
+  STATE.settings.dueDays = Math.max(1,Math.min(60,toInt(value,7)));
+  persist();
+  render();
+}
+
+// ── SALVAR DIRETO NO ARQUIVO (File System Access API) ────────────────────────
+const FH = { handle:null, linked:false, saving:false };
+
+async function _idbFH(mode, val){
+  return new Promise(res=>{
+    const req = indexedDB.open("cf-fh",1);
+    req.onupgradeneeded = e => e.target.result.createObjectStore("s");
+    req.onsuccess = e => {
+      const db = e.target.result;
+      const tx = db.transaction("s", mode === "get" ? "readonly" : "readwrite");
+      const st = tx.objectStore("s");
+      const r  = mode === "get" ? st.get("h") : mode === "set" ? st.put(val,"h") : st.delete("h");
+      r.onsuccess = e2 => res(mode === "get" ? (e2.target.result||null) : true);
+      r.onerror   = () => res(null);
+    };
+    req.onerror = () => res(null);
+  });
+}
+
+async function tryRestoreHandle(){
+  if (!("showOpenFilePicker" in window)) return;
+  try {
+    const handle = await _idbFH("get");
+    if (!handle) return;
+    FH.handle = handle;
+    const perm = await handle.queryPermission({mode:"readwrite"});
+    FH.linked = perm === "granted";
+    render();
+  } catch(e){ console.warn("handle restore:", e); }
+}
+
+async function saveToFile(){
+  // Navegador sem suporte → baixa novo arquivo
+  if (!("showOpenFilePicker" in window)){ _downloadFile(); return; }
+
+  // Primeira vez: pede para o usuário apontar o arquivo
+  if (!FH.handle){
+    try {
+      const [handle] = await window.showOpenFilePicker({
+        types:[{description:"Página HTML",accept:{"text/html":[".html",".htm"]}}],
+        multiple:false,
+      });
+      FH.handle = handle;
+      await _idbFH("set", handle);
+    } catch(e){
+      if (e.name !== "AbortError") alert("Erro ao selecionar arquivo: " + e.message);
+      return;
+    }
+  }
+
+  // Garante permissão de escrita
+  try {
+    const perm = await FH.handle.queryPermission({mode:"readwrite"});
+    if (perm !== "granted"){
+      const req = await FH.handle.requestPermission({mode:"readwrite"});
+      if (req !== "granted"){ alert("Permissão negada."); return; }
+    }
+    FH.linked = true;
+  } catch(e){ alert("Erro de permissão: " + e.message); return; }
+
+  // Grava direto no arquivo
+  FH.saving = true; render();
+  try {
+    const newHtml = _buildHtml();
+    if (!newHtml){ FH.saving=false; render(); return; }
+    const writable = await FH.handle.createWritable();
+    await writable.write(new Blob([newHtml],{type:"text/html;charset=utf-8"}));
+    await writable.close();
+    STATE.dirty = false;
+  } catch(e){
+    // Handle pode estar inválido (arquivo movido/renomeado)
+    FH.handle = null; FH.linked = false;
+    await _idbFH("del");
+    alert("Erro ao salvar. O arquivo pode ter sido movido.\nSelecione-o novamente na próxima vez que salvar.");
+  } finally {
+    FH.saving = false; render();
+  }
+}
+
+function _buildHtml(){
+  const data = JSON.stringify({
+    txs:sortTxs(STATE.txs), cards:STATE.cards, settings:STATE.settings,
+  }, null, 2).replace(/<\/script>/gi,"<\\/script>");
+  const html = "<!DOCTYPE html>\n" + document.documentElement.outerHTML;
+  const rx = /(<script\s[^>]*id="app-data"[^>]*>)([\s\S]*?)(<\/script>)/i;
+  if (!rx.test(html)){ alert("Erro: bloco de dados não encontrado no arquivo."); return null; }
+  return html.replace(rx, `$1${data}$3`);
+}
+
+function _downloadFile(){
+  const newHtml = _buildHtml(); if (!newHtml) return;
+  const blob = new Blob([newHtml],{type:"text/html;charset=utf-8"});
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement("a");
+  a.href = url; a.download = "index.html";
+  document.body.appendChild(a); a.click();
+  document.body.removeChild(a); URL.revokeObjectURL(url);
+  STATE.dirty = false; render();
+}
+
+function clearAllData(){
+  if (!confirm("Apagar todos os dados? Esta ação não pode ser desfeita.")) return;
+  STATE.txs = [];
+  STATE.cards = [];
+  STATE.settings = defaultSettings();
+  STATE.configMsg = "Dados apagados. Clique em 💾 Salvar arquivo para confirmar.";
+  persist();
+  render();
+}
+
+async function registerPwa(){
+  if ("serviceWorker" in navigator && location.protocol !== "file:") {
+    try { await navigator.serviceWorker.register("./sw.js"); }
+    catch (err) { console.warn("Service worker não registrado.",err); }
+  }
+}
+
+function boot(){
+  const data = loadState();
+  STATE.txs = data.txs;
+  STATE.cards = data.cards;
+  STATE.settings = data.settings;
+  STATE.form = emptyForm();
+  render();
+  registerPwa();
+  tryRestoreHandle();
+}
+
+window.addEventListener("beforeunload", e => {
+  if (STATE.dirty) { e.preventDefault(); e.returnValue = ""; }
+});
+
+if (document.readyState === "loading") document.addEventListener("DOMContentLoaded",boot);
+else boot();
+</script>
+</body>
+</html>
