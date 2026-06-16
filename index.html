@@ -1136,10 +1136,17 @@ function mergeData(localData,remoteData){
   (remoteData?.cards||[]).map(normalizeCard).filter(Boolean).forEach(c=>cardMap.set(c.id,c));
   (localData.cards||[]).map(normalizeCard).filter(Boolean).forEach(c=>cardMap.set(c.id,c));
 
-  // Remote first, local overwrites same IDs (local changes take priority)
+  // Merge: para conflitos de mesmo ID, o mais recente (updatedAt) vence.
+  // Transações novas (IDs únicos) são sempre preservadas dos dois lados.
   const txMap = new Map();
   (remoteData?.txs||[]).map(t=>normalizeTx(t,settings.defaultUserId)).filter(Boolean).forEach(t=>txMap.set(t.id,t));
-  (localData.txs||[]).map(t=>normalizeTx(t,settings.defaultUserId)).filter(Boolean).forEach(t=>txMap.set(t.id,t));
+  (localData.txs||[]).map(t=>normalizeTx(t,settings.defaultUserId)).filter(Boolean).forEach(t=>{
+    const existing = txMap.get(t.id);
+    if (!existing){ txMap.set(t.id,t); return; }
+    const remoteTs = existing.updatedAt ? new Date(existing.updatedAt).getTime() : 0;
+    const localTs  = t.updatedAt       ? new Date(t.updatedAt).getTime()        : 0;
+    if (localTs >= remoteTs) txMap.set(t.id,t);
+  });
 
   // Remove tombstoned transactions from both sides
   deletedIds.forEach(id=>txMap.delete(id));
@@ -1448,7 +1455,7 @@ function saveTx(){
 
   if (STATE.editId) {
     const idx = STATE.txs.findIndex(t=>t.id === String(STATE.editId));
-    if (idx >= 0) STATE.txs[idx] = normalizeTx({...STATE.txs[idx],...form,desc,valor,id:STATE.editId});
+    if (idx >= 0) STATE.txs[idx] = normalizeTx({...STATE.txs[idx],...form,desc,valor,id:STATE.editId,updatedAt:new Date().toISOString()});
   } else {
     addTxsFromForm({...form,desc,valor});
   }
@@ -1488,6 +1495,7 @@ function addTxsFromForm(form){
         grupoParc:grupo,
         valorTotal:form.valor,
         recorrGrupo:"",
+        updatedAt:new Date().toISOString(),
       });
     }
     return;
@@ -1516,6 +1524,7 @@ function addTxsFromForm(form){
         totalParcelas:0,
         grupoParc:"",
         valorTotal:0,
+        updatedAt:new Date().toISOString(),
       });
     }
     return;
@@ -1531,6 +1540,7 @@ function addTxsFromForm(form){
     dataVenc:form.dataVenc,
     situacao:form.situacao,
     metodo:form.metodo,
+    updatedAt:new Date().toISOString(),
   }));
 }
 
@@ -1581,12 +1591,13 @@ function toggleSit(id){
   if (!tx) return;
   const sit = getSit(tx);
   tx.situacao = tx.tipo === "receita" ? (sit === "recebido" ? "a_receber" : "recebido") : (sit === "pago" ? "a_pagar" : "pago");
+  tx.updatedAt = new Date().toISOString();
   persist();
   render();
 }
 
 function pagarFatura(cardId,month){
-  STATE.txs.forEach(t=>{ if (t.cartaoId === cardId && ym(t.data) === month && txMatchesUser(t)) t.situacao = "pago"; });
+  STATE.txs.forEach(t=>{ if (t.cartaoId === cardId && ym(t.data) === month && txMatchesUser(t)) { t.situacao = "pago"; t.updatedAt = new Date().toISOString(); } });
   persist();
   render();
 }
