@@ -369,6 +369,7 @@ function normalizeTx(raw,fallbackUserId=DEFAULT_USERS[0].id){
     totalParcelas:toInt(raw.totalParcelas,0),
     grupoParc:raw.grupoParc || "",
     valorTotal:Number.isFinite(toNumber(raw.valorTotal)) ? toNumber(raw.valorTotal) : 0,
+    updatedAt:raw.updatedAt || null,
   };
 }
 
@@ -380,6 +381,7 @@ function normalizeCard(raw){
     diaFech:toInt(raw.diaFech,1),
     diaVenc:toInt(raw.diaVenc,1),
     limite:Number.isFinite(toNumber(raw.limite)) ? toNumber(raw.limite) : 0,
+    updatedAt:raw.updatedAt || null,
   };
 }
 
