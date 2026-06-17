@@ -702,7 +702,7 @@ function renderDashboard(d){
   if (!STATE.dashCartaoSel || !cardById(STATE.dashCartaoSel)) STATE.dashCartaoSel = STATE.cards[0]?.id || "";
   const cartaoSel = cardById(STATE.dashCartaoSel);
   const comprasCartaoSel = cartaoSel
-    ? d.txs.filter(t=>t.cartaoId === cartaoSel.id).slice().sort((a,b)=>b.valor-a.valor).slice(0,5)
+    ? d.txs.filter(t=>t.cartaoId === cartaoSel.id && ym(t.data) === STATE.mesSel).slice().sort((a,b)=>b.valor-a.valor).slice(0,5)
     : [];
 
   const mesesEvo = d.allMeses.filter(m=>m <= STATE.mesSel).slice(-6);
@@ -747,7 +747,7 @@ function renderDashboard(d){
             <div class="row between" style="font-size:13px;padding:5px 0">
               <span>${esc(t.desc)}</span>
               <strong class="neg">-${fmt(t.valor)}</strong>
-            </div>`).join("") : empty("Sem compras neste cartão.")}
+            </div>`).join("") : empty("Sem compras neste cartão no mês selecionado.")}
         ` : ""}
       </section>
     </div>
