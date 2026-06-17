@@ -229,9 +229,8 @@ const GAUTH = {
   signedIn:     false,
   syncing:      false,
   email:        localStorage.getItem("cf_g_email")   || "",
-  fileId:       "",
+  fileId:       localStorage.getItem("cf_g_file_id") || "",
   lastSync:     localStorage.getItem("cf_g_last_sync")|| "",
-  remoteModifiedTime:"",
   msg:          "",
   msgType:      "ok",
 };
@@ -413,20 +412,54 @@ function readLocal(key){
   catch (err) { return ""; }
 }
 
-function emptyDriveData(){
-  return {txs:[],cards:[],settings:defaultSettings(),deletedTxIds:[]};
+function writeLocal(key,payload){
+  try { window.localStorage.setItem(key,JSON.stringify(payload)); }
+  catch (err) { console.warn("Não foi possível salvar no navegador.",err); }
 }
 
 function loadState(){
+  // Prioridade 1: dados embutidos no próprio arquivo
   try {
-    window.localStorage.removeItem(STORAGE_KEY);
-    window.localStorage.removeItem(LEGACY_KEY);
-    window.localStorage.removeItem("cf_g_file_id");
+    const el = document.getElementById("app-data");
+    if (el) {
+      const raw = el.textContent.trim();
+      if (raw && raw !== '{"txs":[],"cards":[],"settings":{}}') {
+        const parsed = JSON.parse(raw);
+        if (parsed.txs || parsed.cards) {
+          const settings = normalizeSettings(parsed.settings);
+          return {
+            txs:sortTxs((parsed.txs||[]).map(t=>normalizeTx(t,settings.defaultUserId)).filter(Boolean)),
+            cards:(parsed.cards||[]).map(normalizeCard).filter(Boolean),
+            settings,
+            deletedTxIds:Array.isArray(parsed.deletedTxIds) ? parsed.deletedTxIds : [],
+          };
+        }
+      }
+    }
   } catch(e) {}
-  return emptyDriveData();
+  // Prioridade 2: localStorage (compatibilidade com versões anteriores)
+  const current = readLocal(STORAGE_KEY);
+  const raw = current || readLocal(LEGACY_KEY);
+  if (!raw) return {txs:[],cards:[],settings:defaultSettings(),deletedTxIds:[]};
+  try {
+    const parsed = JSON.parse(raw);
+    const settings = normalizeSettings(parsed.settings);
+    const data = {
+      txs:sortTxs((parsed.txs||[]).map(t=>normalizeTx(t,settings.defaultUserId)).filter(Boolean)),
+      cards:(parsed.cards||[]).map(normalizeCard).filter(Boolean),
+      settings,
+      deletedTxIds:Array.isArray(parsed.deletedTxIds) ? parsed.deletedTxIds : [],
+    };
+    if (!current) writeLocal(STORAGE_KEY,data);
+    return data;
+  } catch(e) {
+    return {txs:[],cards:[],settings:defaultSettings(),deletedTxIds:[]};
+  }
 }
 
 function persist(){
+  const payload = {txs:sortTxs(STATE.txs),cards:STATE.cards,settings:STATE.settings,deletedTxIds:STATE.deletedTxIds};
+  writeLocal(STORAGE_KEY,payload);
   STATE.dirty = true;
   scheduleSync();
 }
@@ -600,39 +633,7 @@ function dueAlerts(){
     .sort((a,b)=>a.dataVenc.localeCompare(b.dataVenc));
 }
 
-function renderSignedOut(){
-  const toast = GAUTH.msg
-    ? `<div style="position:fixed;bottom:24px;left:50%;transform:translateX(-50%);
-        background:${GAUTH.msgType==="err"?"#c0392b":"#1d9e75"};color:#fff;
-        padding:12px 22px;border-radius:10px;font-size:14px;font-weight:500;
-        z-index:9999;box-shadow:0 4px 16px rgba(0,0,0,.3);
-        white-space:nowrap;max-width:90vw;text-align:center">
-        ${esc(GAUTH.msg)}
-      </div>`
-    : "";
-  document.getElementById("root").innerHTML = `
-    <main class="app">
-      <header class="topbar">
-        <div class="brand">
-          <h1>Controle financeiro</h1>
-          <p>Google Drive como fonte de dados</p>
-        </div>
-      </header>
-      <section class="panel" style="max-width:520px;margin:48px auto">
-        <h2 class="section-title">Entrar no Google Drive</h2>
-        <p class="muted" style="margin-bottom:16px">Conecte sua conta para carregar ou criar o arquivo ${esc(DRIVE_FILENAME)}.</p>
-        <button class="btn primary" onclick="googleSignIn()" ${GAUTH.syncing?"disabled":""}>
-          ${GAUTH.syncing?"Conectando...":"Entrar com Google"}
-        </button>
-      </section>
-    </main>${toast}`;
-}
-
 function render(){
-  if (!GAUTH.signedIn) {
-    renderSignedOut();
-    return;
-  }
   const d = calcDerived();
   if (STATE.cardDetalhe) {
     renderCardDetail(d);
@@ -1056,40 +1057,8 @@ function googleSignOut(){
   }
   GAUTH.accessToken = null;
   GAUTH.signedIn    = false;
-  GAUTH.fileId      = "";
-  GAUTH.remoteModifiedTime = "";
   GAUTH.msg         = "";
-  try { window.localStorage.removeItem("cf_g_file_id"); } catch(e) {}
-  stopDrivePolling();
-  applyDataToState(emptyDriveData());
   render();
-}
-
-function applyDataToState(data){
-  const settings = normalizeSettings(data?.settings);
-  STATE.txs          = sortTxs((data?.txs||[]).map(t=>normalizeTx(t,settings.defaultUserId)).filter(Boolean));
-  STATE.cards        = (data?.cards||[]).map(normalizeCard).filter(Boolean);
-  STATE.settings     = settings;
-  STATE.deletedTxIds = Array.isArray(data?.deletedTxIds) ? data.deletedTxIds : [];
-  const deletedSet   = new Set(STATE.deletedTxIds);
-  STATE.txs          = STATE.txs.filter(t=>!deletedSet.has(t.id));
-  STATE.userView = normalizeUserView(STATE.userView);
-  STATE.form = emptyForm(newTxUserId());
-  STATE.editId = null;
-  STATE.cardEditId = null;
-  STATE.cardDetalhe = null;
-  STATE.showCardForm = false;
-}
-
-function drivePayloadFromState(){
-  return {
-    version:1,
-    savedAt:new Date().toISOString(),
-    txs:sortTxs(STATE.txs),
-    cards:STATE.cards,
-    settings:STATE.settings,
-    deletedTxIds:STATE.deletedTxIds,
-  };
 }
 
 async function _driveReq(url, opts={}){
@@ -1102,10 +1071,6 @@ async function _driveReq(url, opts={}){
     GAUTH.signedIn = false; GAUTH.accessToken = null;
     _gMsg("Sessão expirada. Clique em Reconectar.", "err");
     return null;
-  }
-  if (!resp.ok && resp.status !== 404){
-    const text = await resp.text().catch(()=>"");
-    throw new Error(text || `Erro ${resp.status} no Google Drive`);
   }
   return resp;
 }
@@ -1135,8 +1100,8 @@ async function _writeFile(content, fileId=null){
     `--${boundary}--`,
   ].join("\r\n");
   const url = fileId
-    ? `https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=multipart&fields=id,modifiedTime`
-    : `https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,modifiedTime`;
+    ? `https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=multipart`
+    : `https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart`;
   const r = await _driveReq(url, {
     method: fileId ? "PATCH" : "POST",
     headers:{"Content-Type":`multipart/related; boundary=${boundary}`},
@@ -1145,34 +1110,85 @@ async function _writeFile(content, fileId=null){
   return r ? r.json() : null;
 }
 
-async function _ensureDriveFile(){
-  const existing = await _findFile();
-  if (existing){
-    GAUTH.fileId = existing.id;
-    GAUTH.remoteModifiedTime = existing.modifiedTime || "";
-    return existing;
-  }
-  applyDataToState(emptyDriveData());
-  const created = await _writeFile(drivePayloadFromState(), null);
-  if (!created?.id) throw new Error("Nao foi possivel criar o arquivo no Drive.");
-  GAUTH.fileId = created.id;
-  GAUTH.remoteModifiedTime = created.modifiedTime || "";
-  return created;
+function mergeSettings(localSettings,remoteSettings){
+  const local = normalizeSettings(localSettings);
+  const remote = normalizeSettings(remoteSettings);
+  const users = [];
+  const userMap = new Map();
+  [...remote.users,...local.users].forEach(u=>{
+    if (!userMap.has(u.id)) users.push(u);
+    userMap.set(u.id,u);
+  });
+  const mergedUsers = users.map(u=>userMap.get(u.id));
+  const despesa = Array.from(new Set([...(remote.categories.despesa || []), ...(local.categories.despesa || [])])).filter(Boolean);
+  const receita = Array.from(new Set([...(remote.categories.receita || []), ...(local.categories.receita || [])])).filter(Boolean);
+  const defaultUserId = mergedUsers.some(u=>u.id === local.defaultUserId) ? local.defaultUserId : (mergedUsers[0]?.id || DEFAULT_USERS[0].id);
+  return {...local,users:mergedUsers,defaultUserId,categories:{despesa,receita}};
+}
+
+function mergeData(localData,remoteData){
+  const settings = mergeSettings(localData.settings,remoteData?.settings);
+
+  // Tombstones: union of deleted IDs from both sides
+  const deletedIds = new Set([...(localData.deletedTxIds||[]),...(remoteData?.deletedTxIds||[])]);
+
+  const cardMap = new Map();
+  (remoteData?.cards||[]).map(normalizeCard).filter(Boolean).forEach(c=>cardMap.set(c.id,c));
+  (localData.cards||[]).map(normalizeCard).filter(Boolean).forEach(c=>cardMap.set(c.id,c));
+
+  // Merge: para conflitos de mesmo ID, o mais recente (updatedAt) vence.
+  // Transações novas (IDs únicos) são sempre preservadas dos dois lados.
+  const txMap = new Map();
+  (remoteData?.txs||[]).map(t=>normalizeTx(t,settings.defaultUserId)).filter(Boolean).forEach(t=>txMap.set(t.id,t));
+  (localData.txs||[]).map(t=>normalizeTx(t,settings.defaultUserId)).filter(Boolean).forEach(t=>{
+    const existing = txMap.get(t.id);
+    if (!existing){ txMap.set(t.id,t); return; }
+    const remoteTs = existing.updatedAt ? new Date(existing.updatedAt).getTime() : 0;
+    const localTs  = t.updatedAt       ? new Date(t.updatedAt).getTime()        : 0;
+    if (localTs >= remoteTs) txMap.set(t.id,t);
+  });
+
+  // Remove tombstoned transactions from both sides
+  deletedIds.forEach(id=>txMap.delete(id));
+
+  return {
+    txs:sortTxs(Array.from(txMap.values())),
+    cards:Array.from(cardMap.values()),
+    settings,
+    deletedTxIds:Array.from(deletedIds),
+  };
 }
 
 async function syncToDrive(){
   if (!GAUTH.signedIn){ googleSignIn(); return; }
   GAUTH.syncing = true; render();
   try {
-    const f = await _ensureDriveFile();
-    const result = await _writeFile(drivePayloadFromState(), f.id);
-    if (!result?.id) throw new Error("Resposta invalida do Drive");
-    GAUTH.fileId = result.id;
-    GAUTH.remoteModifiedTime = result.modifiedTime || GAUTH.remoteModifiedTime;
+    if (!GAUTH.fileId){
+      const f = await _findFile();
+      if (f) { GAUTH.fileId = f.id; localStorage.setItem("cf_g_file_id", f.id); }
+    }
+    // Busca dados remotos e mescla para preservar transações de outros dispositivos.
+    // Tombstones garantem que exclusões propagam corretamente.
+    const remoteData = GAUTH.fileId ? await _fetchDriveData() : null;
+    const localData  = {txs:STATE.txs,cards:STATE.cards,settings:STATE.settings,deletedTxIds:STATE.deletedTxIds};
+    const merged     = remoteData ? mergeData(localData,remoteData) : localData;
+    STATE.txs          = merged.txs;
+    STATE.cards        = merged.cards;
+    STATE.settings     = merged.settings;
+    STATE.deletedTxIds = merged.deletedTxIds || [];
+    const payload = {
+      version:1, savedAt:new Date().toISOString(),
+      txs:sortTxs(STATE.txs), cards:STATE.cards, settings:STATE.settings, deletedTxIds:STATE.deletedTxIds,
+    };
+    const result = await _writeFile(payload, GAUTH.fileId||null);
+    if (!result) throw new Error("Resposta inválida do Drive");
+    GAUTH.fileId   = result.id;
     GAUTH.lastSync = new Date().toISOString();
-    localStorage.setItem("cf_g_last_sync", GAUTH.lastSync);
+    localStorage.setItem("cf_g_file_id",    GAUTH.fileId);
+    localStorage.setItem("cf_g_last_sync",  GAUTH.lastSync);
+    writeLocal(STORAGE_KEY,{txs:sortTxs(STATE.txs),cards:STATE.cards,settings:STATE.settings,deletedTxIds:STATE.deletedTxIds});
     STATE.dirty = false;
-    _gMsg("Salvo no Google Drive");
+    _gMsg("Salvo no Google Drive ✓");
   } catch(e){
     _gMsg("Erro ao salvar: "+e.message, "err");
   } finally {
@@ -1180,27 +1196,35 @@ async function syncToDrive(){
   }
 }
 
-async function _fetchDriveData(retry=true){
-  const f = await _ensureDriveFile();
-  const r = await _driveReq(`https://www.googleapis.com/drive/v3/files/${f.id}?alt=media`);
-  if (!r) return null;
-  if (r.status === 404){
-    GAUTH.fileId = "";
-    GAUTH.remoteModifiedTime = "";
-    if (!retry) throw new Error("Arquivo do Drive nao encontrado.");
-    return _fetchDriveData(false);
+async function _fetchDriveData(){
+  let fileId = GAUTH.fileId;
+  if (!fileId){
+    const f = await _findFile();
+    if (!f) return null;
+    fileId = f.id;
+    GAUTH.fileId = fileId;
+    localStorage.setItem("cf_g_file_id", fileId);
   }
+  const r = await _driveReq(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`);
+  if (!r) return null;
   const data = await r.json();
-  GAUTH.fileId = f.id;
-  GAUTH.remoteModifiedTime = f.modifiedTime || GAUTH.remoteModifiedTime;
   return data;
 }
 
 async function _applyDriveData(data){
   if (!data) throw new Error("Sem dados retornados.");
-  if (!data.txs && !data.cards) throw new Error("Arquivo nao reconhecido.");
-  applyDataToState(data);
-  STATE.dirty = false;
+  if (!data.txs && !data.cards) throw new Error("Arquivo não reconhecido.");
+  const settings = normalizeSettings(data.settings);
+  STATE.txs          = sortTxs((data.txs||[]).map(t=>normalizeTx(t,settings.defaultUserId)).filter(Boolean));
+  STATE.cards        = (data.cards||[]).map(normalizeCard).filter(Boolean);
+  STATE.settings     = settings;
+  STATE.deletedTxIds = Array.isArray(data.deletedTxIds) ? data.deletedTxIds : [];
+  const deletedSet   = new Set(STATE.deletedTxIds);
+  STATE.txs          = STATE.txs.filter(t=>!deletedSet.has(t.id));
+  STATE.userView = normalizeUserView(STATE.userView);
+  if (!userById(STATE.form.userId)) STATE.form.userId = newTxUserId();
+  persist();
+  STATE.dirty  = false;
   GAUTH.lastSync = new Date().toISOString();
   localStorage.setItem("cf_g_last_sync", GAUTH.lastSync);
 }
@@ -1208,10 +1232,26 @@ async function _applyDriveData(data){
 async function _autoLoadFromDrive(){
   GAUTH.syncing = true; render();
   try {
-    const data = await _fetchDriveData();
-    await _applyDriveData(data);
-    startDrivePolling();
-    _gMsg(`Dados carregados do Drive - ${STATE.txs.length} lancamento(s).`);
+    const remoteData = await _fetchDriveData();
+    if (!remoteData){
+      _gMsg("Conectado ao Google ✓ — nenhum dado salvo no Drive ainda.", "ok");
+      return;
+    }
+    // Mescla dados do Drive com dados locais para preservar lançamentos
+    // adicionados neste dispositivo que ainda não foram sincronizados.
+    const localData = {txs:STATE.txs,cards:STATE.cards,settings:STATE.settings,deletedTxIds:STATE.deletedTxIds};
+    const merged    = mergeData(localData,remoteData);
+    STATE.txs          = merged.txs;
+    STATE.cards        = merged.cards;
+    STATE.settings     = merged.settings;
+    STATE.deletedTxIds = merged.deletedTxIds || [];
+    STATE.userView = normalizeUserView(STATE.userView);
+    if (!userById(STATE.form.userId)) STATE.form.userId = newTxUserId();
+    persist();
+    STATE.dirty    = false;
+    GAUTH.lastSync = new Date().toISOString();
+    localStorage.setItem("cf_g_last_sync", GAUTH.lastSync);
+    _gMsg(`Dados carregados do Drive ✓ — ${STATE.txs.length} lançamento(s).`);
   } catch(e){
     _gMsg("Erro ao carregar do Drive: " + e.message, "err");
   } finally {
@@ -1221,12 +1261,13 @@ async function _autoLoadFromDrive(){
 
 async function syncFromDrive(){
   if (!GAUTH.signedIn){ googleSignIn(); return; }
-  if (STATE.dirty && !confirm("Descartar alteracoes ainda nao salvas e recarregar do Google Drive?")) return;
+  if (!confirm("Substituir dados locais pelos dados do Google Drive?")) return;
   GAUTH.syncing = true; render();
   try {
     const data = await _fetchDriveData();
+    if (!data) throw new Error("Nenhum arquivo encontrado no Drive.");
     await _applyDriveData(data);
-    _gMsg("Dados recarregados do Drive");
+    _gMsg("Dados carregados do Drive ✓");
   } catch(e){
     _gMsg("Erro ao carregar: " + e.message, "err");
   } finally {
@@ -1700,44 +1741,10 @@ function removeUser(id){
 
 // ── AUTO-SYNC AO DRIVE ───────────────────────────────────────────────────────
 let _syncTimer = null;
-let _drivePollTimer = null;
 function scheduleSync(){
   if (!GAUTH.signedIn) return;
   clearTimeout(_syncTimer);
   _syncTimer = setTimeout(syncToDrive, 4000);
-}
-
-function startDrivePolling(){
-  stopDrivePolling();
-  if (!GAUTH.signedIn) return;
-  _drivePollTimer = setInterval(checkDriveForRemoteChanges, 60000);
-}
-
-function stopDrivePolling(){
-  clearInterval(_drivePollTimer);
-  _drivePollTimer = null;
-}
-
-async function checkDriveForRemoteChanges(){
-  if (!GAUTH.signedIn || GAUTH.syncing || STATE.dirty) return;
-  try {
-    const f = await _findFile();
-    if (!f){
-      const data = await _fetchDriveData();
-      await _applyDriveData(data);
-      _gMsg("Arquivo do Drive recriado e carregado");
-      return;
-    }
-    const remoteTime = f.modifiedTime ? new Date(f.modifiedTime).getTime() : 0;
-    const knownTime = GAUTH.remoteModifiedTime ? new Date(GAUTH.remoteModifiedTime).getTime() : 0;
-    if (remoteTime && remoteTime > knownTime + 500){
-      const data = await _fetchDriveData();
-      await _applyDriveData(data);
-      _gMsg("JSON atualizado no Drive carregado no app");
-    }
-  } catch(e){
-    console.warn("Nao foi possivel verificar alteracoes no Drive.", e);
-  }
 }
 
 function clearAllData(){
@@ -1777,8 +1784,6 @@ function boot(){
 window.addEventListener("beforeunload", e => {
   if (STATE.dirty && GAUTH.signedIn) { e.preventDefault(); e.returnValue = ""; }
 });
-
-window.addEventListener("focus", checkDriveForRemoteChanges);
 
 if (document.readyState === "loading") document.addEventListener("DOMContentLoaded",boot);
 else boot();
