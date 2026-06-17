@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover"/>
-<meta name="theme-color" content="#3266ad"/>
+<meta name="theme-color" content="#c16757"/>
 <meta name="apple-mobile-web-app-capable" content="yes"/>
 <meta name="apple-mobile-web-app-title" content="Controle Financeiro"/>
 <title>Controle Financeiro</title>
@@ -11,22 +11,22 @@
 <link rel="icon" href="./icon.svg" type="image/svg+xml"/>
 <style>
 :root{
-  --bg:#f4f3ef;
+  --bg:#f4f1ee;
   --paper:#fff;
-  --soft:#eeece6;
-  --line:#dedbd3;
-  --line-soft:#eeece6;
-  --text:#1a1917;
-  --muted:#68655f;
-  --faint:#9d9991;
-  --blue:#3266ad;
+  --soft:#f1ebe8;
+  --line:#e3dcd6;
+  --line-soft:#ece1df;
+  --text:#28100b;
+  --muted:#8a7d76;
+  --faint:#b5a89f;
+  --blue:#c16757;
   --green:#178566;
   --red:#d84843;
   --amber:#b46d13;
   --pink:#c94b73;
-  --violet:#7168d9;
+  --violet:#743125;
   --radius:8px;
-  --shadow:0 12px 30px rgba(26,25,23,.07);
+  --shadow:0 12px 30px rgba(40,16,11,.07);
   --font:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;
 }
 *{box-sizing:border-box;margin:0;padding:0}
@@ -77,10 +77,10 @@ input,select{min-width:0}
 .row.wrap{flex-wrap:wrap}
 .row.between{justify-content:space-between}
 .chip{display:inline-flex;align-items:center;gap:6px;border-radius:999px;background:var(--soft);color:var(--muted);font-size:12px;padding:4px 9px}
-.chip.ok{background:#e1f5ee;color:#0f6e56}
-.chip.info{background:#e6f1fb;color:#185fa5}
+.chip.ok{background:#e9f0e0;color:#3b5a1a}
+.chip.info{background:#ece1df;color:#5a4a42}
 .chip.warn{background:#faeeda;color:#854f0b}
-.chip.bad{background:#fcebeb;color:#a32d2d}
+.chip.bad{background:#f5e7e3;color:#a33a2e}
 .list{background:var(--paper);border:1px solid var(--line-soft);border-radius:var(--radius);overflow:hidden}
 .tx{display:grid;grid-template-columns:auto minmax(0,1fr) auto auto auto;align-items:center;gap:9px;padding:11px 12px;border-bottom:1px solid var(--line-soft)}
 .tx:last-child{border-bottom:0}
@@ -162,8 +162,8 @@ const DEFAULT_CATEGORIES = {
 };
 const METHODS = ["Pix","Boleto","Transferência bancária","Dinheiro","Cartão de débito","Cartão de crédito"];
 const MONTHS = ["Janeiro","Fevereiro","Março","Abril","Maio","Junho","Julho","Agosto","Setembro","Outubro","Novembro","Dezembro"];
-const COLORS = ["#3266ad","#178566","#d84843","#b46d13","#c94b73","#7168d9","#5f8d24","#d35b2f"];
-const CARD_COLORS = ["#3266ad","#178566","#d35b2f","#7168d9","#c94b73","#9b6a16"];
+const COLORS = ["#c16757","#178566","#d84843","#b46d13","#c94b73","#743125","#5f8d24","#28100b"];
+const CARD_COLORS = ["#743125","#178566","#c16757","#28100b","#c94b73","#9b6a16"];
 const DEFAULT_USERS = [
   {id:"u1",nome:"Matheus"},
   {id:"u2",nome:"Namorada"},
@@ -206,6 +206,7 @@ const STATE = {
   mesSel:today().slice(0,7),
   userView:readLocal(USER_VIEW_KEY) || DEFAULT_USERS[0].id,
   consAnt:false,
+  dashCartaoSel:"",
   editId:null,
   cardEditId:null,
   cardDetalhe:null,
@@ -688,20 +689,25 @@ function renderDashboard(d){
       }).join("")}
     </section>` : "";
   const saldoAnt = STATE.consAnt && d.saldoAnt !== 0 ? ` ${fmt(d.saldoAnt)}` : "";
-  const cats = d.porCat;
-  const max = cats[0]?.[1] || 1;
 
-  // Reports data
-  const months = d.allMeses.slice(-8);
-  const maxMonthly = Math.max(1,...months.map(m=>Math.max(d.saldoPorMes[m]?.recTot || 0,d.saldoPorMes[m]?.despTot || 0)));
-  const expensesMonth = d.txs.filter(t=>ym(t.data) === STATE.mesSel && t.tipo === "despesa");
-  const byCat = categoryTotals(expensesMonth);
-  const top = expensesMonth.slice().sort((a,b)=>b.valor-a.valor).slice(0,6);
-  const cardRows = STATE.cards.map((c,i)=>{
-    const usage = d.usoCartao[c.id] || 0;
-    const pct = c.limite ? Math.min(1,usage/c.limite) : 0;
-    return barLine(c.nome,usage,pct,CARD_COLORS[i % CARD_COLORS.length]);
-  }).join("");
+  const despesasMes = d.txs.filter(t=>ym(t.data) === STATE.mesSel && t.tipo === "despesa" && isDone(t));
+  const receitasMes = d.txs.filter(t=>ym(t.data) === STATE.mesSel && t.tipo === "receita" && isDone(t));
+  const despCatTop5 = categoryTotals(despesasMes).slice(0,5);
+  const recCatTop5 = categoryTotals(receitasMes).slice(0,5);
+  const despMax = despCatTop5[0]?.[1] || 1;
+  const recMax = recCatTop5[0]?.[1] || 1;
+
+  const cardsTop5 = STATE.cards.slice().sort((a,b)=>(d.usoCartao[b.id]||0)-(d.usoCartao[a.id]||0)).slice(0,5);
+  const cardUsoMax = Math.max(1,...cardsTop5.map(c=>d.usoCartao[c.id]||0));
+  if (!STATE.dashCartaoSel || !cardById(STATE.dashCartaoSel)) STATE.dashCartaoSel = STATE.cards[0]?.id || "";
+  const cartaoSel = cardById(STATE.dashCartaoSel);
+  const comprasCartaoSel = cartaoSel
+    ? d.txs.filter(t=>t.cartaoId === cartaoSel.id).slice().sort((a,b)=>b.valor-a.valor).slice(0,5)
+    : [];
+
+  const mesesEvo = d.allMeses.filter(m=>m <= STATE.mesSel).slice(-6);
+  const recValues = mesesEvo.map(m=>d.saldoPorMes[m]?.recTot || 0);
+  const despValues = mesesEvo.map(m=>d.saldoPorMes[m]?.despTot || 0);
 
   return `
     <div class="row wrap" style="margin-bottom:12px">
@@ -717,40 +723,44 @@ function renderDashboard(d){
       ${metric("Receita prevista",r.recTot,"pos")}
       ${metric("Despesa prevista",r.despTot,"neg")}
     </section>
-    <div class="grid cols-2" style="margin-bottom:12px">
-      ${alertHtml}
+    ${alertHtml ? `<div style="margin-bottom:12px">${alertHtml}</div>` : ""}
+    <div class="grid cols-3" style="margin-bottom:16px">
       <section class="panel">
-        <h2 class="section-title">Despesas pagas por categoria</h2>
-        ${cats.length ? cats.map(([cat,val],i)=>barLine(cat,val,val/max,COLORS[i%COLORS.length])).join("") : empty("Nenhuma despesa paga neste mês.")}
+        <h2 class="section-title">Despesas por categoria</h2>
+        ${despCatTop5.length ? despCatTop5.map(([cat,val],i)=>barLine(cat,val,val/despMax,COLORS[i%COLORS.length])).join("") : empty("Sem despesas neste mês.")}
+      </section>
+      <section class="panel">
+        <h2 class="section-title">Receitas por categoria</h2>
+        ${recCatTop5.length ? recCatTop5.map(([cat,val],i)=>barLine(cat,val,val/recMax,COLORS[i%COLORS.length])).join("") : empty("Sem receitas neste mês.")}
+      </section>
+      <section class="panel">
+        <div class="row between" style="margin-bottom:12px">
+          <h2 class="section-title" style="margin:0">Uso por cartão</h2>
+          ${STATE.cards.length ? `<select class="input white" style="width:auto;font-size:12px;padding:5px 8px" onchange="STATE.dashCartaoSel=this.value;render()">
+            ${STATE.cards.map(c=>`<option value="${esc(c.id)}" ${STATE.dashCartaoSel===c.id?"selected":""}>${esc(c.nome)}</option>`).join("")}
+          </select>` : ""}
+        </div>
+        ${cardsTop5.length ? cardsTop5.map((c,i)=>barLine(c.nome,d.usoCartao[c.id]||0,(d.usoCartao[c.id]||0)/cardUsoMax,CARD_COLORS[i%CARD_COLORS.length])).join("") : empty("Nenhum cartão cadastrado.")}
+        ${cartaoSel ? `
+          <p class="muted" style="font-size:12px;margin-top:14px;border-top:1px solid var(--line-soft);padding-top:10px">Maiores compras · ${esc(cartaoSel.nome)}</p>
+          ${comprasCartaoSel.length ? comprasCartaoSel.map(t=>`
+            <div class="row between" style="font-size:13px;padding:5px 0">
+              <span>${esc(t.desc)}</span>
+              <strong class="neg">-${fmt(t.valor)}</strong>
+            </div>`).join("") : empty("Sem compras neste cartão.")}
+        ` : ""}
       </section>
     </div>
-    <div class="grid cols-2">
-      <section class="panel">
-        <h2 class="section-title">Evolução mensal</h2>
-        ${months.map(m=>{
-          const row = d.saldoPorMes[m] || {recTot:0,despTot:0,saldoMes:0};
-          return `<div style="margin-bottom:14px">
-            <div class="row between" style="font-size:13px;margin-bottom:6px"><strong>${monthLabel(m)}</strong><span class="${row.saldoMes >= 0 ? "pos" : "neg"}">${fmt(row.saldoMes)}</span></div>
-            <div class="grid cols-2" style="gap:6px">
-              <div class="bar"><span style="width:${Math.max(3,row.recTot/maxMonthly*100)}%;background:var(--green)"></span></div>
-              <div class="bar"><span style="width:${Math.max(3,row.despTot/maxMonthly*100)}%;background:var(--red)"></span></div>
-            </div>
-          </div>`;
-        }).join("")}
-      </section>
-      <section class="panel">
-        <h2 class="section-title">Categorias do mês</h2>
-        ${byCat.length ? byCat.map(([cat,val],i)=>barLine(cat,val,val/(byCat[0][1] || 1),COLORS[i%COLORS.length])).join("") : empty("Sem despesas neste mês.")}
-      </section>
-      <section class="panel">
-        <h2 class="section-title">Uso por cartão</h2>
-        ${cardRows || empty("Nenhum cartão cadastrado.")}
-      </section>
-      <section class="panel">
-        <h2 class="section-title">Maiores despesas</h2>
-        ${top.length ? `<div class="list">${top.map(t=>renderTxRow(t,true)).join("")}</div>` : empty("Sem despesas neste mês.")}
-      </section>
-    </div>`;
+    <section class="panel" style="margin-bottom:12px">
+      <div class="row between" style="margin-bottom:12px">
+        <h2 class="section-title" style="margin:0">Evolução — últimos ${mesesEvo.length} meses</h2>
+        <div class="row wrap" style="gap:14px;font-size:12px">
+          <span class="row" style="gap:5px"><span style="width:9px;height:9px;border-radius:50%;background:var(--green);display:inline-block"></span>Receitas</span>
+          <span class="row" style="gap:5px"><span style="width:9px;height:9px;border-radius:50%;background:var(--red);display:inline-block"></span>Despesas</span>
+        </div>
+      </div>
+      ${mesesEvo.length ? lineAreaChart(mesesEvo,recValues,despValues) : empty("Sem dados suficientes.")}
+    </section>`;
 }
 
 function metric(label,value,colorClass){
@@ -766,6 +776,40 @@ function barLine(label,value,pct,color){
 
 function empty(text){
   return `<div class="empty">${esc(text)}</div>`;
+}
+
+function lineAreaChart(meses,recValues,despValues){
+  const w = 600, h = 150, padL = 10, padR = 10, padTop = 14, padBottom = 28;
+  const innerW = w - padL - padR;
+  const baseline = h - padBottom;
+  const maxVal = Math.max(1,...recValues,...despValues);
+  const n = meses.length;
+  const stepX = n > 1 ? innerW/(n-1) : 0;
+  const xAt = i => padL + stepX*i;
+  const yAt = v => baseline - (v/maxVal)*(baseline-padTop);
+  const pts = arr => arr.map((v,i)=>`${xAt(i).toFixed(1)},${yAt(v).toFixed(1)}`).join(" ");
+  const recPts = pts(recValues);
+  const despPts = pts(despValues);
+  const recArea = `${recPts} ${xAt(n-1).toFixed(1)},${baseline} ${xAt(0).toFixed(1)},${baseline}`;
+  const despArea = `${despPts} ${xAt(n-1).toFixed(1)},${baseline} ${xAt(0).toFixed(1)},${baseline}`;
+  const dots = (arr,color) => arr.map((v,i)=>{
+    const last = i === n-1;
+    return `<circle cx="${xAt(i).toFixed(1)}" cy="${yAt(v).toFixed(1)}" r="${last?4.5:3.5}" fill="${color}"${last ? ' stroke="#fff" stroke-width="1.5"' : ""}/>`;
+  }).join("");
+  const labels = meses.map((m,i)=>{
+    const last = i === n-1;
+    return `<text x="${xAt(i).toFixed(1)}" y="${h-8}" font-size="11" fill="${last ? "var(--text)" : "var(--muted)"}" font-weight="${last?"650":"400"}" text-anchor="middle">${esc(monthLabel(m).split(" ")[0])}</text>`;
+  }).join("");
+  return `<svg viewBox="0 0 ${w} ${h}" width="100%" height="${h}" role="img" aria-label="Evolução de receitas e despesas nos últimos meses">
+    <line x1="${padL}" y1="${baseline}" x2="${w-padR}" y2="${baseline}" stroke="var(--line-soft)" stroke-width="1"/>
+    <polygon points="${recArea}" fill="var(--green)" opacity="0.1"/>
+    <polygon points="${despArea}" fill="var(--red)" opacity="0.1"/>
+    <polyline points="${recPts}" fill="none" stroke="var(--green)" stroke-width="2.5"/>
+    <polyline points="${despPts}" fill="none" stroke="var(--red)" stroke-width="2.5"/>
+    ${dots(recValues,"var(--green)")}
+    ${dots(despValues,"var(--red)")}
+    ${labels}
+  </svg>`;
 }
 
 function renderHistory(d){
