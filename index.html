@@ -461,6 +461,7 @@ function persist(){
   const payload = {txs:sortTxs(STATE.txs),cards:STATE.cards,settings:STATE.settings,deletedTxIds:STATE.deletedTxIds};
   writeLocal(STORAGE_KEY,payload);
   STATE.dirty = true;
+  scheduleSync();
 }
 
 function faturaYM(dataCompra,diaFechamento){
@@ -666,15 +667,15 @@ function render(){
       </div>`
     : "";
 
-  const cloudDirtyDot = STATE.dirty ? `<span style="width:7px;height:7px;border-radius:50%;background:#e8a000;display:inline-block;margin-right:3px;vertical-align:middle;flex-shrink:0"></span>` : "";
   const cloudBtn = GAUTH.signedIn
-    ? `<button class="btn ${GAUTH.syncing?"":"primary"}" onclick="syncToDrive()" ${GAUTH.syncing?"disabled":""} title="Salvar no Google Drive">${GAUTH.syncing?"☁ Salvando…":`${cloudDirtyDot}☁<span class="hide-mobile"> Drive</span>`}</button>`
-    : `<button class="btn" onclick="googleSignIn()" title="Entrar com Google para salvar na nuvem">☁<span class="hide-mobile"> Entrar</span></button>`;
-  const dirtyDot = STATE.dirty
-    ? `<span style="width:8px;height:8px;border-radius:50%;background:#e8a000;display:inline-block;margin-right:4px;flex-shrink:0"></span>`
-    : "";
-  const saveLabel = FH.saving ? "Salvando…" : FH.linked ? "💾 Salvar" : "💾 Salvar arquivo";
-  const saveTitle = FH.linked ? "Salvar direto no arquivo" : "Clique para vincular o arquivo e salvar";
+    ? `<button class="btn ${GAUTH.syncing?"":"primary"}" onclick="syncToDrive()" ${GAUTH.syncing?"disabled":""} title="Sincronizar com Google Drive">
+        ${GAUTH.syncing
+          ? "☁ Salvando…"
+          : STATE.dirty
+            ? `<span style="width:7px;height:7px;border-radius:50%;background:#e8a000;display:inline-block;margin-right:4px;vertical-align:middle;flex-shrink:0"></span>☁<span class="hide-mobile"> Drive</span>`
+            : `☁<span class="hide-mobile"> Drive ✓</span>`}
+      </button>`
+    : `<button class="btn" onclick="googleSignIn()" title="Entrar com Google para sincronizar">☁<span class="hide-mobile"> Entrar</span></button>`;
   document.getElementById("root").innerHTML = `
     <main class="app">
       <header class="topbar">
@@ -686,7 +687,6 @@ function render(){
           <select class="input white" style="width:auto" onchange="setUserView(this.value)">${userOptions}</select>
           <select class="input white" style="width:auto" onchange="STATE.mesSel=this.value;render()">${monthOptions}</select>
           ${cloudBtn}
-          <button class="btn ${STATE.dirty ? "primary" : ""} hide-mobile" onclick="saveToFile()" ${FH.saving?"disabled":""} title="${saveTitle}">${dirtyDot}${saveLabel}</button>
           <button class="btn primary hide-mobile" onclick="setAba('nova')">Nova transação</button>
         </div>
       </header>
@@ -1739,104 +1739,12 @@ function removeUser(id){
   render();
 }
 
-// ── SALVAR DIRETO NO ARQUIVO (File System Access API) ────────────────────────
-const FH = { handle:null, linked:false, saving:false };
-
-async function _idbFH(mode, val){
-  return new Promise(res=>{
-    const req = indexedDB.open("cf-fh",1);
-    req.onupgradeneeded = e => e.target.result.createObjectStore("s");
-    req.onsuccess = e => {
-      const db = e.target.result;
-      const tx = db.transaction("s", mode === "get" ? "readonly" : "readwrite");
-      const st = tx.objectStore("s");
-      const r  = mode === "get" ? st.get("h") : mode === "set" ? st.put(val,"h") : st.delete("h");
-      r.onsuccess = e2 => res(mode === "get" ? (e2.target.result||null) : true);
-      r.onerror   = () => res(null);
-    };
-    req.onerror = () => res(null);
-  });
-}
-
-async function tryRestoreHandle(){
-  if (!("showOpenFilePicker" in window)) return;
-  try {
-    const handle = await _idbFH("get");
-    if (!handle) return;
-    FH.handle = handle;
-    const perm = await handle.queryPermission({mode:"readwrite"});
-    FH.linked = perm === "granted";
-    render();
-  } catch(e){ console.warn("handle restore:", e); }
-}
-
-async function saveToFile(){
-  // Navegador sem suporte → baixa novo arquivo
-  if (!("showOpenFilePicker" in window)){ _downloadFile(); return; }
-
-  // Primeira vez: pede para o usuário apontar o arquivo
-  if (!FH.handle){
-    try {
-      const [handle] = await window.showOpenFilePicker({
-        types:[{description:"Página HTML",accept:{"text/html":[".html",".htm"]}}],
-        multiple:false,
-      });
-      FH.handle = handle;
-      await _idbFH("set", handle);
-    } catch(e){
-      if (e.name !== "AbortError") alert("Erro ao selecionar arquivo: " + e.message);
-      return;
-    }
-  }
-
-  // Garante permissão de escrita
-  try {
-    const perm = await FH.handle.queryPermission({mode:"readwrite"});
-    if (perm !== "granted"){
-      const req = await FH.handle.requestPermission({mode:"readwrite"});
-      if (req !== "granted"){ alert("Permissão negada."); return; }
-    }
-    FH.linked = true;
-  } catch(e){ alert("Erro de permissão: " + e.message); return; }
-
-  // Grava direto no arquivo
-  FH.saving = true; render();
-  try {
-    const newHtml = _buildHtml();
-    if (!newHtml){ FH.saving=false; render(); return; }
-    const writable = await FH.handle.createWritable();
-    await writable.write(new Blob([newHtml],{type:"text/html;charset=utf-8"}));
-    await writable.close();
-    STATE.dirty = false;
-  } catch(e){
-    // Handle pode estar inválido (arquivo movido/renomeado)
-    FH.handle = null; FH.linked = false;
-    await _idbFH("del");
-    alert("Erro ao salvar. O arquivo pode ter sido movido.\nSelecione-o novamente na próxima vez que salvar.");
-  } finally {
-    FH.saving = false; render();
-  }
-}
-
-function _buildHtml(){
-  const data = JSON.stringify({
-    txs:sortTxs(STATE.txs), cards:STATE.cards, settings:STATE.settings, deletedTxIds:STATE.deletedTxIds,
-  }, null, 2).replace(/<\/script>/gi,"<\\/script>");
-  const html = "<!DOCTYPE html>\n" + document.documentElement.outerHTML;
-  const rx = /(<script\s[^>]*id="app-data"[^>]*>)([\s\S]*?)(<\/script>)/i;
-  if (!rx.test(html)){ alert("Erro: bloco de dados não encontrado no arquivo."); return null; }
-  return html.replace(rx, `$1${data}$3`);
-}
-
-function _downloadFile(){
-  const newHtml = _buildHtml(); if (!newHtml) return;
-  const blob = new Blob([newHtml],{type:"text/html;charset=utf-8"});
-  const url  = URL.createObjectURL(blob);
-  const a    = document.createElement("a");
-  a.href = url; a.download = "index.html";
-  document.body.appendChild(a); a.click();
-  document.body.removeChild(a); URL.revokeObjectURL(url);
-  STATE.dirty = false; render();
+// ── AUTO-SYNC AO DRIVE ───────────────────────────────────────────────────────
+let _syncTimer = null;
+function scheduleSync(){
+  if (!GAUTH.signedIn) return;
+  clearTimeout(_syncTimer);
+  _syncTimer = setTimeout(syncToDrive, 4000);
 }
 
 function clearAllData(){
@@ -1847,7 +1755,7 @@ function clearAllData(){
   STATE.userView = defaultUserId();
   STATE.form = emptyForm(newTxUserId());
   try { localStorage.setItem(USER_VIEW_KEY,STATE.userView); } catch(e) {}
-  STATE.configMsg = "Dados apagados. Clique em 💾 Salvar arquivo para confirmar.";
+  STATE.configMsg = "Dados apagados. Sincronizando com o Drive…";
   persist();
   render();
 }
@@ -1870,12 +1778,11 @@ function boot(){
   STATE.form = emptyForm(newTxUserId());
   render();
   registerPwa();
-  tryRestoreHandle();
   tryInitGoogleAuth();
 }
 
 window.addEventListener("beforeunload", e => {
-  if (STATE.dirty) { e.preventDefault(); e.returnValue = ""; }
+  if (STATE.dirty && GAUTH.signedIn) { e.preventDefault(); e.returnValue = ""; }
 });
 
 if (document.readyState === "loading") document.addEventListener("DOMContentLoaded",boot);
