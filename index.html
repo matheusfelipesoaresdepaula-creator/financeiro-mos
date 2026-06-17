@@ -169,6 +169,7 @@ const METHODS = ["Pix","Boleto","Transferência bancária","Dinheiro","Cartão d
 const MONTHS = ["Janeiro","Fevereiro","Março","Abril","Maio","Junho","Julho","Agosto","Setembro","Outubro","Novembro","Dezembro"];
 const COLORS = ["#c16757","#178566","#d84843","#b46d13","#c94b73","#743125","#5f8d24","#28100b"];
 const CARD_COLORS = ["#743125","#178566","#c16757","#28100b","#c94b73","#9b6a16"];
+const INVEST_COLORS = ["#178566","#5f8d24","#743125","#c16757","#9b6a16","#28100b"];
 const DEFAULT_USERS = [
   {id:"u1",nome:"Matheus"},
   {id:"u2",nome:"Namorada"},
@@ -206,6 +207,7 @@ const esc = value => String(value ?? "").replace(/&/g,"&amp;").replace(/</g,"&lt
 const STATE = {
   txs:[],
   cards:[],
+  investments:[],
   deletedTxIds:[],
   settings:defaultSettings(),
   aba:"dashboard",
@@ -217,14 +219,19 @@ const STATE = {
   cardEditId:null,
   cardDetalhe:null,
   showCardForm:false,
+  investEditId:null,
+  investDetalhe:null,
+  showInvestForm:false,
   faturaOpen:{},
   form:emptyForm(),
   cardForm:emptyCardForm(),
+  investForm:emptyInvestForm(),
   categoryForm:{tipo:"despesa",nome:""},
   userForm:{nome:""},
   filters:{q:"",tipo:"todos",status:"todos",categoria:"",metodo:"",cartao:"",mes:"todos"},
   erro:"",
   cardErro:"",
+  investErro:"",
   configMsg:"",
   dirty:false,
 };
@@ -266,11 +273,17 @@ function emptyForm(userId=DEFAULT_USERS[0].id){
     recorrMeses:6,
     cartaoId:"",
     parcelas:1,
+    caixinhaId:"",
+    subtipoInv:"deposito",
   };
 }
 
 function emptyCardForm(){
   return {nome:"",diaFech:"",diaVenc:"",limite:""};
+}
+
+function emptyInvestForm(){
+  return {nome:"",meta:""};
 }
 
 function toNumber(value){
@@ -357,7 +370,7 @@ function normalizeUsers(rawUsers){
 function normalizeTx(raw,fallbackUserId=DEFAULT_USERS[0].id){
   const id = raw?.id;
   if (id === undefined || id === null || String(id).trim() === "") return null;
-  const tipo = raw.tipo === "receita" ? "receita" : "despesa";
+  const tipo = raw.tipo === "receita" ? "receita" : raw.tipo === "investimento" ? "investimento" : "despesa";
   const valor = toNumber(raw.valor);
   return {
     id:String(id),
@@ -365,17 +378,19 @@ function normalizeTx(raw,fallbackUserId=DEFAULT_USERS[0].id){
     tipo,
     desc:String(raw.desc || ""),
     valor:Number.isFinite(valor) ? valor : 0,
-    categoria:raw.categoria || "Outros",
+    categoria:tipo === "investimento" ? "" : (raw.categoria || "Outros"),
     data:raw.data || today(),
-    dataVenc:raw.dataVenc || "",
+    dataVenc:tipo === "investimento" ? "" : (raw.dataVenc || ""),
     situacao:raw.situacao || (tipo === "receita" ? "a_receber" : "a_pagar"),
-    metodo:raw.metodo || "Pix",
+    metodo:tipo === "investimento" ? "" : (raw.metodo || "Pix"),
     recorrGrupo:raw.recorrGrupo || "",
     cartaoId:raw.cartaoId || "",
     parcelaAtual:toInt(raw.parcelaAtual,0),
     totalParcelas:toInt(raw.totalParcelas,0),
     grupoParc:raw.grupoParc || "",
     valorTotal:Number.isFinite(toNumber(raw.valorTotal)) ? toNumber(raw.valorTotal) : 0,
+    caixinhaId:tipo === "investimento" ? String(raw.caixinhaId || "") : "",
+    subtipoInv:tipo === "investimento" ? (raw.subtipoInv === "resgate" ? "resgate" : "deposito") : "",
     updatedAt:raw.updatedAt || null,
   };
 }
@@ -388,6 +403,16 @@ function normalizeCard(raw){
     diaFech:toInt(raw.diaFech,1),
     diaVenc:toInt(raw.diaVenc,1),
     limite:Number.isFinite(toNumber(raw.limite)) ? toNumber(raw.limite) : 0,
+    updatedAt:raw.updatedAt || null,
+  };
+}
+
+function normalizeInvest(raw){
+  if (!raw?.id) return null;
+  return {
+    id:String(raw.id),
+    nome:String(raw.nome || ""),
+    meta:Number.isFinite(toNumber(raw.meta)) ? toNumber(raw.meta) : 0,
     updatedAt:raw.updatedAt || null,
   };
 }
@@ -426,11 +451,11 @@ function writeLocal(key,payload){
 
 function loadState(){
   // Fonte única: Google Drive. Inicia sempre vazio; dados chegam via _autoLoadFromDrive.
-  return {txs:[],cards:[],settings:defaultSettings(),deletedTxIds:[]};
+  return {txs:[],cards:[],investments:[],settings:defaultSettings(),deletedTxIds:[]};
 }
 
 function persist(){
-  const payload = {txs:sortTxs(STATE.txs),cards:STATE.cards,settings:STATE.settings,deletedTxIds:STATE.deletedTxIds};
+  const payload = {txs:sortTxs(STATE.txs),cards:STATE.cards,investments:STATE.investments,settings:STATE.settings,deletedTxIds:STATE.deletedTxIds};
   writeLocal(STORAGE_KEY,payload);
   STATE.dirty = true;
   scheduleSync();
@@ -471,8 +496,28 @@ function cardName(id){
   return cardById(id)?.nome || "Cartão removido";
 }
 
+function investById(id){
+  return STATE.investments.find(c=>c.id === id) || null;
+}
+
+function investName(id){
+  return investById(id)?.nome || "Caixinha removida";
+}
+
+// Saldo global da caixinha (depósitos - resgates), somando TODOS os usuários,
+// já que a caixinha é um "pote" compartilhado, igual ao limite de um cartão.
+// excludeTxId permite calcular "como se esta transação não existisse" (útil ao editar).
+function investSaldoGlobal(caixinhaId,excludeTxId=null){
+  const excludeId = excludeTxId !== null && excludeTxId !== undefined ? String(excludeTxId) : null;
+  return STATE.txs.reduce((sum,t)=>{
+    if (t.tipo !== "investimento" || t.caixinhaId !== caixinhaId) return sum;
+    if (excludeId && t.id === excludeId) return sum;
+    return sum + (t.subtipoInv === "resgate" ? -t.valor : t.valor);
+  },0);
+}
+
 function categoryList(tipo,selected=""){
-  const base = STATE.settings.categories[tipo] || DEFAULT_CATEGORIES[tipo];
+  const base = STATE.settings.categories[tipo] || DEFAULT_CATEGORIES[tipo] || [];
   return base.includes(selected) || !selected ? base : [selected,...base];
 }
 
@@ -538,20 +583,22 @@ function calcDerived(){
 
   const saldoPorMes = {};
   allMeses.forEach(month=>{
-    const normais = txs.filter(t=>ym(t.data) === month && !t.cartaoId);
+    const normais = txs.filter(t=>ym(t.data) === month && !t.cartaoId && t.tipo !== "investimento");
+    const investMes = txs.filter(t=>ym(t.data) === month && t.tipo === "investimento");
     const faturas = faturasPorMesCartao[month] || {};
-    let receitas=0,despesas=0,recTot=0,despTot=0;
+    let receitas=0,despesas=0,recTot=0,despTot=0,depositos=0,resgates=0;
     normais.forEach(t=>{
       if (t.tipo === "receita") { recTot += t.valor; if (isDone(t)) receitas += t.valor; }
       else { despTot += t.valor; if (isDone(t)) despesas += t.valor; }
     });
+    investMes.forEach(t=>{ if (t.subtipoInv === "resgate") resgates += t.valor; else depositos += t.valor; });
     Object.values(faturas).forEach(arr=>{
       const total = arr.reduce((s,t)=>s+t.valor,0);
       const pago = arr.filter(isDone).reduce((s,t)=>s+t.valor,0);
       despTot += total;
       despesas += pago;
     });
-    saldoPorMes[month] = {receitas,despesas,saldoMes:receitas-despesas,recTot,despTot};
+    saldoPorMes[month] = {receitas,despesas,saldoMes:receitas-despesas-depositos+resgates,recTot,despTot,depositos,resgates};
   });
 
   const saldoAcum = {};
@@ -562,7 +609,7 @@ function calcDerived(){
   });
   const idx = allMeses.indexOf(STATE.mesSel);
   const saldoAnt = idx > 0 ? saldoAcum[allMeses[idx-1]] || 0 : 0;
-  const base = saldoPorMes[STATE.mesSel] || {receitas:0,despesas:0,saldoMes:0,recTot:0,despTot:0};
+  const base = saldoPorMes[STATE.mesSel] || {receitas:0,despesas:0,saldoMes:0,recTot:0,despTot:0,depositos:0,resgates:0};
   const resumoMes = {...base,saldoFinal:STATE.consAnt ? base.saldoMes + saldoAnt : base.saldoMes};
 
   const txsMes = txs.filter(t=>ym(t.data) === STATE.mesSel && !t.cartaoId).sort((a,b)=>b.data.localeCompare(a.data));
@@ -572,8 +619,10 @@ function calcDerived(){
   STATE.cards.forEach(c=>{
     usoCartao[c.id] = txs.filter(t=>t.cartaoId === c.id && !isDone(t)).reduce((s,t)=>s+t.valor,0);
   });
+  const usoCaixinha = {};
+  STATE.investments.forEach(inv=>{ usoCaixinha[inv.id] = investSaldoGlobal(inv.id); });
 
-  return {txs,allMeses,faturasPorMesCartao,saldoPorMes,saldoAcum,saldoAnt,resumoMes,txsMes,faturasMes,porCat,usoCartao};
+  return {txs,allMeses,faturasPorMesCartao,saldoPorMes,saldoAcum,saldoAnt,resumoMes,txsMes,faturasMes,porCat,usoCartao,usoCaixinha};
 }
 
 function categoryTotals(txs){
@@ -611,12 +660,17 @@ function render(){
     renderCardDetail(d);
     return;
   }
+  if (STATE.investDetalhe) {
+    renderInvestDetail(d);
+    return;
+  }
 
   const tabs = [
     ["dashboard","Resumo"],
     ["nova",STATE.editId ? "Editar" : "Nova transação"],
     ["historico","Histórico"],
     ["cartoes","Cartões"],
+    ["investimentos","Investimentos"],
     ["config","Configurações"],
   ];
   const monthOptions = d.allMeses.map(m=>`<option value="${m}" ${m === STATE.mesSel ? "selected" : ""}>${monthLabel(m)}</option>`).join("");
@@ -625,6 +679,7 @@ function render(){
   if (STATE.aba === "dashboard") body = renderDashboard(d);
   if (STATE.aba === "historico") body = renderHistory(d);
   if (STATE.aba === "cartoes") body = renderCards(d);
+  if (STATE.aba === "investimentos") body = renderInvestments(d);
   if (STATE.aba === "config") body = renderConfig();
   if (STATE.aba === "nova") body = renderTxForm();
 
@@ -672,6 +727,7 @@ function render(){
       <button class="${STATE.aba==="dashboard"?"active":""}" onclick="setAba('dashboard')"><span class="bn-icon">📊</span>Resumo</button>
       <button class="${STATE.aba==="historico"?"active":""}" onclick="setAba('historico')"><span class="bn-icon">📋</span>Histórico</button>
       <button class="${STATE.aba==="cartoes"?"active":""}" onclick="setAba('cartoes')"><span class="bn-icon">💳</span>Cartões</button>
+      <button class="${STATE.aba==="investimentos"?"active":""}" onclick="setAba('investimentos')"><span class="bn-icon">🐷</span>Caixinhas</button>
       <button class="${STATE.aba==="config"?"active":""}" onclick="setAba('config')"><span class="bn-icon">⚙️</span>Config</button>
     </nav>
     <button class="fab" onclick="setAba('nova')" title="Nova transação" aria-label="Nova transação">+</button>`;
@@ -722,6 +778,8 @@ function renderDashboard(d){
     <div class="row wrap" style="margin-bottom:12px">
       <label class="chip" style="cursor:pointer"><input type="checkbox" ${STATE.consAnt ? "checked" : ""} onchange="STATE.consAnt=this.checked;render()"/> Considerar saldo anterior${saldoAnt}</label>
       <span class="chip">Pagos e recebidos no saldo efetivo</span>
+      ${r.depositos > 0 ? `<span class="chip info">-${fmt(r.depositos)} em depósitos</span>` : ""}
+      ${r.resgates > 0 ? `<span class="chip ok">+${fmt(r.resgates)} em resgates</span>` : ""}
     </div>
     <section class="grid cols-3 metrics" style="margin-bottom:12px">
       ${metric("Saldo efetivo",r.saldoFinal,r.saldoFinal >= 0 ? "pos" : "neg")}
@@ -833,7 +891,7 @@ function renderHistory(d){
         <input class="input" placeholder="Buscar" value="${esc(STATE.filters.q)}" oninput="STATE.filters.q=this.value;render()"/>
         <select class="input" onchange="STATE.filters.mes=this.value;render()">${monthOpts}</select>
         <select class="input" onchange="STATE.filters.tipo=this.value;render()">
-          ${[["todos","Todos"],["despesa","Despesa"],["receita","Receita"]].map(([v,l])=>`<option value="${v}" ${STATE.filters.tipo===v?"selected":""}>${l}</option>`).join("")}
+          ${[["todos","Todos"],["despesa","Despesa"],["receita","Receita"],["investimento","Investimento"]].map(([v,l])=>`<option value="${v}" ${STATE.filters.tipo===v?"selected":""}>${l}</option>`).join("")}
         </select>
         <select class="input" onchange="STATE.filters.status=this.value;render()">
           ${statusOpts.map(([v,l])=>`<option value="${v}" ${STATE.filters.status===v?"selected":""}>${l}</option>`).join("")}
@@ -875,6 +933,25 @@ function renderHistory(d){
 }
 
 function renderTxRow(t,showCard=false){
+  if (t.tipo === "investimento") {
+    const isResgate = t.subtipoInv === "resgate";
+    const color = isResgate ? "var(--green)" : "var(--red)";
+    const sign = isResgate ? "+" : "-";
+    const userTag = STATE.userView === ALL_USERS ? `<span class="chip">${esc(userName(t.userId))}</span>` : "";
+    return `<div class="tx">
+      <span class="dot" style="background:${color}"></span>
+      <div style="min-width:0">
+        <div class="tx-title"><p>${esc(t.desc)}</p>${t.recorrGrupo ? `<span class="chip">recorrente</span>` : ""}${userTag}</div>
+        <div class="tx-sub">${isResgate ? "Resgate" : "Depósito"} · ${esc(investName(t.caixinhaId))} · ${fmtD(t.data)}</div>
+      </div>
+      <span class="chip ${isResgate ? "ok" : "info"}">${isResgate ? "Resgate" : "Depósito"}</span>
+      <strong class="amount" style="color:${color};text-align:right;min-width:92px">${sign}${fmt(t.valor)}</strong>
+      <span class="actions row">
+        <button class="icon-btn" title="Editar" onclick="startEdit(${jsArg(t.id)})"><span class="hide-mobile">Editar</span><span class="show-mobile">✏</span></button>
+        <button class="icon-btn" title="Excluir" onclick="deleteTx(${jsArg(t.id)})"><span class="hide-mobile">Excluir</span><span class="show-mobile">✕</span></button>
+      </span>
+    </div>`;
+  }
   const sit = getSit(t);
   const [statusClass,statusLabel] = statusMeta(sit);
   const color = t.tipo === "receita" ? "var(--green)" : "var(--red)";
@@ -1005,9 +1082,156 @@ function renderCardDetail(d){
     <button onclick="STATE.cardDetalhe=null;setAba('dashboard')"><span class="bn-icon">📊</span>Resumo</button>
     <button onclick="STATE.cardDetalhe=null;setAba('historico')"><span class="bn-icon">📋</span>Histórico</button>
     <button class="active"><span class="bn-icon">💳</span>Cartões</button>
+    <button onclick="STATE.cardDetalhe=null;setAba('investimentos')"><span class="bn-icon">🐷</span>Caixinhas</button>
     <button onclick="STATE.cardDetalhe=null;setAba('config')"><span class="bn-icon">⚙️</span>Config</button>
   </nav>
   <button class="fab" onclick="STATE.cardDetalhe=null;setAba('nova')" title="Nova transação" aria-label="Nova transação">+</button>`;
+}
+
+// ── INVESTIMENTOS (caixinhas) ────────────────────────────────────────────────
+// Caixinha é um "pote" compartilhado entre os usuários, igual ao cartão: a
+// definição (nome/meta) é global, e o saldo mostrado é sempre a soma de TODOS
+// os depósitos/resgates (independente do filtro Matheus/Namorada/Ambos no topo).
+
+function renderInvestments(d){
+  const items = STATE.investments.map((inv,idx)=>{
+    const saldo = d.usoCaixinha[inv.id] || 0;
+    const pct = inv.meta > 0 ? Math.min(100,Math.round((saldo/inv.meta)*100)) : 0;
+    const color = INVEST_COLORS[idx % INVEST_COLORS.length];
+    const atingida = inv.meta > 0 && saldo >= inv.meta;
+    const subtitulo = atingida ? "Meta atingida 🎉" : inv.meta > 0 ? `Faltam ${fmt(Math.max(0,inv.meta-saldo))}` : "Sem meta definida";
+    return `<article class="card" style="background:${color}" onclick="STATE.investDetalhe='${inv.id}';render()">
+      <div>
+        <div class="row between">
+          <h2 style="font-size:17px;font-weight:650">${esc(inv.nome)}</h2>
+          <span class="row">
+            <button class="btn small" onclick="event.stopPropagation();startInvestEdit('${inv.id}')">Editar</button>
+            <button class="btn small" onclick="event.stopPropagation();deleteInvest('${inv.id}')">Excluir</button>
+          </span>
+        </div>
+        <p style="font-size:12px;opacity:.84;margin-top:2px">${subtitulo}</p>
+      </div>
+      <div>
+        <div class="progress"><span style="width:${pct}%"></span></div>
+        <div class="row between" style="font-size:12px;margin-top:7px"><span>${fmt(saldo)} guardado</span><span>${inv.meta > 0 ? fmt(inv.meta) : "—"}</span></div>
+      </div>
+    </article>`;
+  }).join("");
+  const form = STATE.showInvestForm ? renderInvestForm() : "";
+  return `<p class="footer-note" style="margin-top:0;margin-bottom:12px">Caixinhas são compartilhadas: o valor guardado soma os lançamentos de todos os usuários, independente do filtro selecionado no topo.</p>
+  <div class="grid auto" style="margin-bottom:12px">
+    ${items}
+    <button class="panel" style="min-height:146px;border-style:dashed;color:var(--muted);font-weight:650" onclick="startInvestAdd()">Adicionar caixinha</button>
+  </div>${form}`;
+}
+
+function renderInvestForm(){
+  const title = STATE.investEditId ? "Editar caixinha" : "Nova caixinha";
+  return `<section class="panel">
+    <h2 class="section-title">${title}</h2>
+    <div class="grid cols-2">
+      <div class="field"><label>Nome</label><input class="input" value="${esc(STATE.investForm.nome)}" placeholder="Ex: Reserva de emergência" oninput="STATE.investForm.nome=this.value"/></div>
+      <div class="field"><label>Meta (opcional)</label><input class="input" inputmode="numeric" placeholder="R$ 0,00" value="${esc(moneyDisplay(STATE.investForm.meta))}" oninput="handleMoneyInput(this, STATE.investForm, 'meta')"/></div>
+    </div>
+    ${STATE.investErro ? `<p class="neg" style="font-size:13px;margin-top:10px">${esc(STATE.investErro)}</p>` : ""}
+    <div class="row" style="margin-top:12px">
+      <button class="btn ghost" onclick="cancelInvestForm()">Cancelar</button>
+      <button class="btn primary" onclick="saveInvest()">Salvar caixinha</button>
+    </div>
+  </section>`;
+}
+
+function renderInvestDetail(d){
+  const inv = investById(STATE.investDetalhe);
+  if (!inv) { STATE.investDetalhe = null; render(); return; }
+  const txs = STATE.txs.filter(t=>t.tipo === "investimento" && t.caixinhaId === inv.id).sort((a,b)=>b.data.localeCompare(a.data));
+  const saldo = d.usoCaixinha[inv.id] || 0;
+  const pct = inv.meta > 0 ? Math.min(100,Math.round((saldo/inv.meta)*100)) : 0;
+  const idx = STATE.investments.findIndex(c=>c.id === inv.id);
+  const color = INVEST_COLORS[idx % INVEST_COLORS.length];
+  const userTotals = {};
+  txs.forEach(t=>{ const sinal = t.subtipoInv === "resgate" ? -1 : 1; userTotals[t.userId] = (userTotals[t.userId] || 0) + sinal*t.valor; });
+  const usersText = Object.entries(userTotals).map(([id,value])=>`${esc(userName(id))}: ${fmt(value)}`).join(" · ");
+  document.getElementById("root").innerHTML = `<main class="app">
+    <div class="row between wrap" style="margin-bottom:12px">
+      <button class="btn ghost" onclick="STATE.investDetalhe=null;render()">← Voltar</button>
+    </div>
+    <section class="card" style="background:${color};margin-bottom:16px">
+      <div>
+        <h1 style="font-size:22px">${esc(inv.nome)}</h1>
+        <p style="font-size:13px;opacity:.86">${usersText || "Nenhum lançamento ainda"}</p>
+      </div>
+      <div>
+        <div class="progress"><span style="width:${pct}%"></span></div>
+        <div class="row between" style="font-size:13px;margin-top:8px"><span>${fmt(saldo)} guardado</span><span>${inv.meta > 0 ? `Meta ${fmt(inv.meta)}` : "Sem meta"}</span></div>
+      </div>
+    </section>
+    ${txs.length ? `<div class="list">${txs.map(t=>renderTxRow(t,false)).join("")}</div>` : empty("Nenhum depósito ou resgate ainda.")}
+  </main>
+  <nav class="bottom-nav">
+    <button onclick="STATE.investDetalhe=null;setAba('dashboard')"><span class="bn-icon">📊</span>Resumo</button>
+    <button onclick="STATE.investDetalhe=null;setAba('historico')"><span class="bn-icon">📋</span>Histórico</button>
+    <button onclick="STATE.investDetalhe=null;setAba('cartoes')"><span class="bn-icon">💳</span>Cartões</button>
+    <button class="active"><span class="bn-icon">🐷</span>Caixinhas</button>
+    <button onclick="STATE.investDetalhe=null;setAba('config')"><span class="bn-icon">⚙️</span>Config</button>
+  </nav>
+  <button class="fab" onclick="STATE.investDetalhe=null;setAba('nova')" title="Nova transação" aria-label="Nova transação">+</button>`;
+}
+
+function startInvestAdd(){
+  STATE.investEditId = null;
+  STATE.investForm = emptyInvestForm();
+  STATE.investErro = "";
+  STATE.showInvestForm = true;
+  render();
+}
+
+function startInvestEdit(id){
+  const inv = investById(id);
+  if (!inv) return;
+  STATE.investEditId = id;
+  STATE.investForm = {nome:inv.nome,meta:inv.meta ? moneyDisplay(inv.meta) : ""};
+  STATE.investErro = "";
+  STATE.showInvestForm = true;
+  STATE.aba = "investimentos";
+  render();
+}
+
+function cancelInvestForm(){
+  STATE.investEditId = null;
+  STATE.investForm = emptyInvestForm();
+  STATE.investErro = "";
+  STATE.showInvestForm = false;
+  render();
+}
+
+function saveInvest(){
+  const f = STATE.investForm;
+  const nome = f.nome.trim();
+  const metaRaw = f.meta === "" ? 0 : toNumber(f.meta);
+  if (!nome) { STATE.investErro = "Informe o nome."; render(); return; }
+  if (!Number.isFinite(metaRaw) || metaRaw < 0) { STATE.investErro = "Informe uma meta válida (ou deixe em branco)."; render(); return; }
+  const inv = {id:STATE.investEditId || makeId("inv"),nome,meta:metaRaw};
+  if (STATE.investEditId) {
+    const idx = STATE.investments.findIndex(c=>c.id === STATE.investEditId);
+    if (idx >= 0) STATE.investments[idx] = inv;
+  } else {
+    STATE.investments.push(inv);
+  }
+  persist();
+  cancelInvestForm();
+}
+
+function deleteInvest(id){
+  const saldo = investSaldoGlobal(id);
+  const aviso = Math.abs(saldo) > 0.005
+    ? `Esta caixinha ainda tem ${fmt(saldo)} guardado. Excluir mesmo assim? O histórico de lançamentos será preservado, mas a caixinha não aparecerá mais na lista.`
+    : "Excluir esta caixinha?";
+  if (!confirm(aviso)) return;
+  STATE.investments = STATE.investments.filter(c=>c.id !== id);
+  if (STATE.investDetalhe === id) STATE.investDetalhe = null;
+  persist();
+  render();
 }
 
 
@@ -1154,6 +1378,10 @@ function mergeData(localData,remoteData){
   (remoteData?.cards||[]).map(normalizeCard).filter(Boolean).forEach(c=>cardMap.set(c.id,c));
   (localData.cards||[]).map(normalizeCard).filter(Boolean).forEach(c=>cardMap.set(c.id,c));
 
+  const investMap = new Map();
+  (remoteData?.investments||[]).map(normalizeInvest).filter(Boolean).forEach(c=>investMap.set(c.id,c));
+  (localData.investments||[]).map(normalizeInvest).filter(Boolean).forEach(c=>investMap.set(c.id,c));
+
   // Merge: para conflitos de mesmo ID, o mais recente (updatedAt) vence.
   // Transações novas (IDs únicos) são sempre preservadas dos dois lados.
   const txMap = new Map();
@@ -1172,6 +1400,7 @@ function mergeData(localData,remoteData){
   return {
     txs:sortTxs(Array.from(txMap.values())),
     cards:Array.from(cardMap.values()),
+    investments:Array.from(investMap.values()),
     settings,
     deletedTxIds:Array.from(deletedIds),
   };
@@ -1188,7 +1417,7 @@ async function syncToDrive(){
     // Drive é a única fonte de verdade: salva o estado atual diretamente, sem mesclar.
     const payload = {
       version:1, savedAt:new Date().toISOString(),
-      txs:sortTxs(STATE.txs), cards:STATE.cards, settings:STATE.settings, deletedTxIds:STATE.deletedTxIds,
+      txs:sortTxs(STATE.txs), cards:STATE.cards, investments:STATE.investments, settings:STATE.settings, deletedTxIds:STATE.deletedTxIds,
     };
     const result = await _writeFile(payload, GAUTH.fileId||null);
     if (!result) throw new Error("Resposta inválida do Drive");
@@ -1226,6 +1455,7 @@ async function _applyDriveData(data){
   const settings = normalizeSettings(data.settings);
   STATE.txs          = sortTxs((data.txs||[]).map(t=>normalizeTx(t,settings.defaultUserId)).filter(Boolean));
   STATE.cards        = (data.cards||[]).map(normalizeCard).filter(Boolean);
+  STATE.investments  = (data.investments||[]).map(normalizeInvest).filter(Boolean);
   STATE.settings     = settings;
   STATE.deletedTxIds = Array.isArray(data.deletedTxIds) ? data.deletedTxIds : [];
   const deletedSet   = new Set(STATE.deletedTxIds);
@@ -1374,7 +1604,8 @@ function renderCategoryManager(tipo,label){
 function renderTxForm(){
   const form = STATE.form;
   const isCard = form.metodo === "Cartão de crédito";
-  const cats = categoryList(form.tipo,form.categoria);
+  const isInvest = form.tipo === "investimento";
+  const cats = isInvest ? [] : categoryList(form.tipo,form.categoria);
   const methods = form.tipo === "receita" ? METHODS.filter(m=>!m.includes("Cartão")) : METHODS;
   const userOptions = userOptionsHtml(form.userId,false);
   const value = toNumber(form.valor);
@@ -1387,20 +1618,33 @@ function renderTxForm(){
     const card = cardById(form.cartaoId);
     if (card) preview = `<p class="footer-note">Fatura de ${monthLabel(faturaYM(form.data,card.diaFech))} · vence dia ${card.diaVenc}</p>`;
   }
+  const caixinhaSel = isInvest ? investById(form.caixinhaId) : null;
+  const saldoCaixinhaSel = caixinhaSel ? investSaldoGlobal(caixinhaSel.id,STATE.editId) : 0;
   return `<section class="panel">
     <div class="seg" style="margin-bottom:14px">
       <button class="${form.tipo === "despesa" ? "active" : ""}" onclick="setTipo('despesa')">Despesa</button>
       <button class="${form.tipo === "receita" ? "active" : ""}" onclick="setTipo('receita')">Receita</button>
+      <button class="${isInvest ? "active" : ""}" onclick="setTipo('investimento')">Investimento</button>
     </div>
+    ${isInvest ? `<div class="seg" style="margin-bottom:14px">
+      <button class="${form.subtipoInv !== "resgate" ? "active" : ""}" onclick="setSubtipoInv('deposito')">Depósito</button>
+      <button class="${form.subtipoInv === "resgate" ? "active" : ""}" onclick="setSubtipoInv('resgate')">Resgate</button>
+    </div>` : ""}
     <div class="grid cols-2">
-      <div class="field" style="grid-column:1/-1"><label>Descrição</label><input class="input" placeholder="Ex: Aluguel, Salário..." value="${esc(form.desc)}" oninput="STATE.form.desc=this.value"/></div>
+      <div class="field" style="grid-column:1/-1"><label>Descrição</label><input class="input" placeholder="${isInvest ? "Ex: Reserva de emergência" : "Ex: Aluguel, Salário..."}" value="${esc(form.desc)}" oninput="STATE.form.desc=this.value"/></div>
       <div class="field"><label>Valor</label><input class="input" inputmode="numeric" placeholder="R$ 0,00" value="${esc(moneyDisplay(form.valor))}" oninput="handleMoneyInput(this, STATE.form)"/></div>
       <div class="field"><label>Data</label><input class="input" type="date" value="${form.data}" oninput="STATE.form.data=this.value" onchange="STATE.form.data=this.value;render()"/></div>
       <div class="field"><label>Responsável</label><select class="input" onchange="STATE.form.userId=this.value">${userOptions}</select></div>
+      ${isInvest ? `<div class="field"><label>Caixinha</label><select class="input" onchange="STATE.form.caixinhaId=this.value;render()">
+          <option value="">Selecione</option>
+          ${STATE.investments.map(c=>`<option value="${esc(c.id)}" ${form.caixinhaId===c.id?"selected":""}>${esc(c.nome)}</option>`).join("")}
+        </select></div>` : `
       <div class="field"><label>Categoria</label><select class="input" onchange="STATE.form.categoria=this.value">${cats.map(c=>`<option value="${esc(c)}" ${form.categoria===c?"selected":""}>${esc(c)}</option>`).join("")}</select></div>
-      <div class="field"><label>Método</label><select class="input" onchange="STATE.form.metodo=this.value;STATE.form.cartaoId='';STATE.form.parcelas=1;render()">${methods.map(m=>`<option value="${m}" ${form.metodo===m?"selected":""}>${m}</option>`).join("")}</select></div>
+      <div class="field"><label>Método</label><select class="input" onchange="STATE.form.metodo=this.value;STATE.form.cartaoId='';STATE.form.parcelas=1;render()">${methods.map(m=>`<option value="${m}" ${form.metodo===m?"selected":""}>${m}</option>`).join("")}</select></div>`}
     </div>
-    ${isCard ? `<div class="panel tight" style="margin-top:12px;background:var(--bg)">
+    ${isInvest && !STATE.investments.length ? `<p class="footer-note">Você ainda não tem caixinhas. <a href="#" onclick="event.preventDefault();setAba('investimentos')" style="color:var(--blue)">Criar uma caixinha</a> primeiro.</p>` : ""}
+    ${isInvest && caixinhaSel ? `<p class="footer-note">Saldo atual da caixinha: <strong>${fmt(saldoCaixinhaSel)}</strong>${caixinhaSel.meta > 0 ? ` de ${fmt(caixinhaSel.meta)}` : ""}</p>` : ""}
+    ${isInvest ? "" : isCard ? `<div class="panel tight" style="margin-top:12px;background:var(--bg)">
       <div class="grid cols-2">
         <div class="field"><label>Cartão</label><select class="input white" onchange="STATE.form.cartaoId=this.value;render()"><option value="">Selecione</option>${STATE.cards.map(c=>`<option value="${c.id}" ${form.cartaoId===c.id?"selected":""}>${esc(c.nome)}</option>`).join("")}</select></div>
         <div class="field"><label>Parcelas</label><select class="input white" onchange="STATE.form.parcelas=parseInt(this.value);render()">${parcels}</select></div>
@@ -1416,7 +1660,7 @@ function renderTxForm(){
     ${STATE.erro ? `<p class="neg" style="font-size:13px;margin-top:10px">${esc(STATE.erro)}</p>` : ""}
     <div class="row" style="margin-top:14px">
       ${STATE.editId ? `<button class="btn ghost" onclick="cancelEdit()">Cancelar</button>` : ""}
-      <button class="btn primary" onclick="saveTx()">${STATE.editId ? "Salvar alterações" : isCard ? `Lançar ${form.parcelas}x` : form.recorrente ? `Criar ${form.recorrMeses} lançamentos` : "Adicionar"}</button>
+      <button class="btn primary" onclick="saveTx()">${STATE.editId ? "Salvar alterações" : isCard ? `Lançar ${form.parcelas}x` : form.recorrente ? `Criar ${form.recorrMeses} lançamentos` : isInvest ? (form.subtipoInv === "resgate" ? "Resgatar" : "Depositar") : "Adicionar"}</button>
     </div>
   </section>`;
 }
@@ -1431,12 +1675,19 @@ function setTipo(tipo){
   STATE.form = {
     ...STATE.form,
     tipo,
-    categoria:categoryList(tipo)[0],
-    situacao:tipo === "receita" ? "a_receber" : "a_pagar",
-    metodo:"Pix",
+    categoria:tipo === "investimento" ? "" : categoryList(tipo)[0],
+    situacao:tipo === "receita" ? "a_receber" : tipo === "investimento" ? "" : "a_pagar",
+    metodo:tipo === "investimento" ? "" : "Pix",
     cartaoId:"",
     parcelas:1,
+    caixinhaId:tipo === "investimento" ? (STATE.form.caixinhaId || STATE.investments[0]?.id || "") : "",
+    subtipoInv:tipo === "investimento" ? (STATE.form.subtipoInv || "deposito") : "deposito",
   };
+  render();
+}
+
+function setSubtipoInv(subtipo){
+  STATE.form.subtipoInv = subtipo;
   render();
 }
 
@@ -1449,6 +1700,17 @@ function saveTx(){
   if (!form.data) { STATE.erro = "Informe uma data."; render(); return; }
   if (!userById(form.userId)) { STATE.erro = "Selecione o responsável."; render(); return; }
   if (form.metodo === "Cartão de crédito" && !form.cartaoId) { STATE.erro = "Selecione o cartão."; render(); return; }
+  if (form.tipo === "investimento") {
+    if (!form.caixinhaId || !investById(form.caixinhaId)) { STATE.erro = "Selecione a caixinha."; render(); return; }
+    if (form.subtipoInv === "resgate") {
+      const saldoAtual = investSaldoGlobal(form.caixinhaId,STATE.editId);
+      if (valor > saldoAtual + 0.005) {
+        STATE.erro = `Saldo insuficiente na caixinha. Disponível: ${fmt(saldoAtual)}.`;
+        render();
+        return;
+      }
+    }
+  }
 
   if (STATE.editId) {
     const idx = STATE.txs.findIndex(t=>t.id === String(STATE.editId));
@@ -1513,7 +1775,7 @@ function addTxsFromForm(form){
         categoria:form.categoria,
         data:`${month}-${day}`,
         dataVenc:form.dataVenc ? `${month}-${form.dataVenc.slice(8,10)}` : "",
-        situacao:i === 0 ? form.situacao : (form.tipo === "receita" ? "a_receber" : "a_pagar"),
+        situacao:i === 0 ? form.situacao : (form.tipo === "receita" ? "a_receber" : form.tipo === "investimento" ? "" : "a_pagar"),
         metodo:form.metodo,
         recorrGrupo:grupo,
         cartaoId:"",
@@ -1521,6 +1783,8 @@ function addTxsFromForm(form){
         totalParcelas:0,
         grupoParc:"",
         valorTotal:0,
+        caixinhaId:form.caixinhaId || "",
+        subtipoInv:form.subtipoInv || "",
         updatedAt:new Date().toISOString(),
       });
     }
@@ -1537,6 +1801,8 @@ function addTxsFromForm(form){
     dataVenc:form.dataVenc,
     situacao:form.situacao,
     metodo:form.metodo,
+    caixinhaId:form.caixinhaId,
+    subtipoInv:form.subtipoInv,
     updatedAt:new Date().toISOString(),
   }));
 }
@@ -1559,6 +1825,8 @@ function startEdit(id){
     recorrMeses:6,
     cartaoId:tx.cartaoId,
     parcelas:tx.totalParcelas || 1,
+    caixinhaId:tx.caixinhaId || "",
+    subtipoInv:tx.subtipoInv || "deposito",
   };
   STATE.editId = id;
   STATE.aba = "nova";
@@ -1748,6 +2016,7 @@ function clearAllData(){
   if (!confirm("Apagar todos os dados? Esta ação não pode ser desfeita.")) return;
   STATE.txs = [];
   STATE.cards = [];
+  STATE.investments = [];
   STATE.settings = defaultSettings();
   STATE.userView = defaultUserId();
   STATE.form = emptyForm(newTxUserId());
@@ -1768,6 +2037,7 @@ function boot(){
   const data = loadState();
   STATE.txs = data.txs;
   STATE.cards = data.cards;
+  STATE.investments = data.investments || [];
   STATE.settings = data.settings;
   STATE.deletedTxIds = data.deletedTxIds || [];
   STATE.userView = normalizeUserView(STATE.userView);
