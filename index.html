@@ -418,43 +418,8 @@ function writeLocal(key,payload){
 }
 
 function loadState(){
-  // Prioridade 1: dados embutidos no próprio arquivo
-  try {
-    const el = document.getElementById("app-data");
-    if (el) {
-      const raw = el.textContent.trim();
-      if (raw && raw !== '{"txs":[],"cards":[],"settings":{}}') {
-        const parsed = JSON.parse(raw);
-        if (parsed.txs || parsed.cards) {
-          const settings = normalizeSettings(parsed.settings);
-          return {
-            txs:sortTxs((parsed.txs||[]).map(t=>normalizeTx(t,settings.defaultUserId)).filter(Boolean)),
-            cards:(parsed.cards||[]).map(normalizeCard).filter(Boolean),
-            settings,
-            deletedTxIds:Array.isArray(parsed.deletedTxIds) ? parsed.deletedTxIds : [],
-          };
-        }
-      }
-    }
-  } catch(e) {}
-  // Prioridade 2: localStorage (compatibilidade com versões anteriores)
-  const current = readLocal(STORAGE_KEY);
-  const raw = current || readLocal(LEGACY_KEY);
-  if (!raw) return {txs:[],cards:[],settings:defaultSettings(),deletedTxIds:[]};
-  try {
-    const parsed = JSON.parse(raw);
-    const settings = normalizeSettings(parsed.settings);
-    const data = {
-      txs:sortTxs((parsed.txs||[]).map(t=>normalizeTx(t,settings.defaultUserId)).filter(Boolean)),
-      cards:(parsed.cards||[]).map(normalizeCard).filter(Boolean),
-      settings,
-      deletedTxIds:Array.isArray(parsed.deletedTxIds) ? parsed.deletedTxIds : [],
-    };
-    if (!current) writeLocal(STORAGE_KEY,data);
-    return data;
-  } catch(e) {
-    return {txs:[],cards:[],settings:defaultSettings(),deletedTxIds:[]};
-  }
+  // Fonte única: Google Drive. Inicia sempre vazio; dados chegam via _autoLoadFromDrive.
+  return {txs:[],cards:[],settings:defaultSettings(),deletedTxIds:[]};
 }
 
 function persist(){
@@ -1167,15 +1132,7 @@ async function syncToDrive(){
       const f = await _findFile();
       if (f) { GAUTH.fileId = f.id; localStorage.setItem("cf_g_file_id", f.id); }
     }
-    // Busca dados remotos e mescla para preservar transações de outros dispositivos.
-    // Tombstones garantem que exclusões propagam corretamente.
-    const remoteData = GAUTH.fileId ? await _fetchDriveData() : null;
-    const localData  = {txs:STATE.txs,cards:STATE.cards,settings:STATE.settings,deletedTxIds:STATE.deletedTxIds};
-    const merged     = remoteData ? mergeData(localData,remoteData) : localData;
-    STATE.txs          = merged.txs;
-    STATE.cards        = merged.cards;
-    STATE.settings     = merged.settings;
-    STATE.deletedTxIds = merged.deletedTxIds || [];
+    // Drive é a única fonte de verdade: salva o estado atual diretamente, sem mesclar.
     const payload = {
       version:1, savedAt:new Date().toISOString(),
       txs:sortTxs(STATE.txs), cards:STATE.cards, settings:STATE.settings, deletedTxIds:STATE.deletedTxIds,
@@ -1186,7 +1143,6 @@ async function syncToDrive(){
     GAUTH.lastSync = new Date().toISOString();
     localStorage.setItem("cf_g_file_id",    GAUTH.fileId);
     localStorage.setItem("cf_g_last_sync",  GAUTH.lastSync);
-    writeLocal(STORAGE_KEY,{txs:sortTxs(STATE.txs),cards:STATE.cards,settings:STATE.settings,deletedTxIds:STATE.deletedTxIds});
     STATE.dirty = false;
     _gMsg("Salvo no Google Drive ✓");
   } catch(e){
@@ -1237,20 +1193,8 @@ async function _autoLoadFromDrive(){
       _gMsg("Conectado ao Google ✓ — nenhum dado salvo no Drive ainda.", "ok");
       return;
     }
-    // Mescla dados do Drive com dados locais para preservar lançamentos
-    // adicionados neste dispositivo que ainda não foram sincronizados.
-    const localData = {txs:STATE.txs,cards:STATE.cards,settings:STATE.settings,deletedTxIds:STATE.deletedTxIds};
-    const merged    = mergeData(localData,remoteData);
-    STATE.txs          = merged.txs;
-    STATE.cards        = merged.cards;
-    STATE.settings     = merged.settings;
-    STATE.deletedTxIds = merged.deletedTxIds || [];
-    STATE.userView = normalizeUserView(STATE.userView);
-    if (!userById(STATE.form.userId)) STATE.form.userId = newTxUserId();
-    persist();
-    STATE.dirty    = false;
-    GAUTH.lastSync = new Date().toISOString();
-    localStorage.setItem("cf_g_last_sync", GAUTH.lastSync);
+    // Drive é a única fonte de verdade: aplica diretamente, sem mesclar com local.
+    await _applyDriveData(remoteData);
     _gMsg(`Dados carregados do Drive ✓ — ${STATE.txs.length} lançamento(s).`);
   } catch(e){
     _gMsg("Erro ao carregar do Drive: " + e.message, "err");
