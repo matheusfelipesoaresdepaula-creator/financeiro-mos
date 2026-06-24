@@ -92,7 +92,7 @@ input,select{min-width:0}
 .pos{color:var(--green)}
 .neg{color:var(--red)}
 .warn{color:var(--amber)}
-.btn{border:1px solid var(--line);background:var(--paper);color:var(--text);border-radius:10px;padding:9px 16px;font-size:13.5px;font-weight:500;transition:opacity .15s}
+.btn{border:1px solid var(--line);background:var(--paper);color:var(--text);border-radius:10px;padding:9px 16px;font-size:13.5px;font-weight:500;transition:opacity .15s;white-space:nowrap}
 .btn.primary{border-color:var(--blue);background:var(--blue);color:#fff;font-weight:600}
 .btn.danger{border-color:#f0ccc6;background:#fdf3f0;color:#a02818}
 .btn.ghost{background:transparent;border-color:transparent}
@@ -123,6 +123,10 @@ input,select{min-width:0}
 .progress span{display:block;height:100%;border-radius:999px;background:rgba(255,255,255,.9)}
 .bar{height:7px;border-radius:999px;background:var(--soft);overflow:hidden}
 .bar span{display:block;height:100%;border-radius:999px}
+.fatura-chips{display:flex;gap:7px;overflow-x:auto;scrollbar-width:none;padding-bottom:4px;margin-bottom:16px}
+.fatura-chips::-webkit-scrollbar{display:none}
+.fatura-chip{flex:0 0 auto;border:1.5px solid var(--line);background:var(--paper);color:var(--muted);border-radius:999px;padding:7px 15px;font-size:13px;font-weight:600;white-space:nowrap;transition:background .15s,color .15s,border-color .15s}
+.fatura-chip.active{background:var(--blue);border-color:var(--blue);color:#fff}
 .filters{background:var(--paper);border:1px solid var(--line-soft);border-radius:14px;padding:14px;margin-bottom:16px;box-shadow:var(--shadow-sm)}
 .filters-grid{display:grid;grid-template-columns:2fr repeat(5,minmax(120px,1fr));gap:8px}
 .empty{border:1px dashed var(--line);border-radius:10px;padding:22px;text-align:center;color:var(--muted);background:transparent;font-size:14px}
@@ -142,6 +146,12 @@ input,select{min-width:0}
   .top-actions .input{flex:1}
   .grid.cols-2,.grid.cols-3{grid-template-columns:1fr}
   .grid.metrics{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .metric{padding:14px 14px}
+  .metric span{font-size:10px;margin-bottom:5px}
+  .metric strong{font-size:18px;letter-spacing:-.3px}
+  .metric.sm{padding:12px 13px}
+  .metric.sm strong{font-size:15px}
+  .top-actions .input{font-size:13px;padding:9px 10px}
   .filters-grid{grid-template-columns:repeat(2,1fr)}
   .tx{grid-template-columns:36px minmax(0,1fr) auto;gap:8px}
   .tx .amount{grid-column:2/3;text-align:left!important}
@@ -226,10 +236,16 @@ const addDays = (date, days) => {
   d.setDate(d.getDate()+days);
   return d.toISOString().split("T")[0];
 };
+const MONTHS_SHORT = ["Jan","Fev","Mar","Abr","Mai","Jun","Jul","Ago","Set","Out","Nov","Dez"];
 const monthLabel = value => {
   const [y,m] = value.split("-");
   return `${MONTHS[Number(m)-1]} ${y}`;
 };
+const monthLabelShort = value => {
+  const [y,m] = value.split("-");
+  return `${MONTHS_SHORT[Number(m)-1]} ${y.slice(2)}`;
+};
+const isMobile = () => window.matchMedia("(max-width:760px)").matches;
 // Quantidade de meses (inclusiva) do mês `a` até o mês `b` (formato YYYY-MM).
 const monthsBetween = (a,b) => {
   const [ya,ma] = a.split("-").map(Number);
@@ -257,6 +273,7 @@ const STATE = {
   investDetalhe:null,
   showInvestForm:false,
   faturaOpen:{},
+  faturaMesSel:null,
   form:emptyForm(),
   cardForm:emptyCardForm(),
   investForm:emptyInvestForm(),
@@ -502,6 +519,14 @@ function faturaYM(dataCompra,diaFechamento){
   return dia <= diaFechamento ? ym(dataCompra) : addM(ym(dataCompra),1);
 }
 
+// Mês que um lançamento ocupa no resumo: competência da fatura para compras de cartão
+// (respeita o dia de fechamento), ou o mês da data para os demais lançamentos.
+function txMonth(t){
+  if (!t.cartaoId) return ym(t.data);
+  const card = cardById(t.cartaoId);
+  return card ? faturaYM(t.data,card.diaFech) : ym(t.data);
+}
+
 function getSit(t){
   if (t.tipo === "receita") return t.situacao || "a_receber";
   if (t.situacao === "pago") return "pago";
@@ -610,12 +635,13 @@ function visibleTxs(){
 function calcDerived(){
   const txs = visibleTxs();
   const months = new Set(txs.map(t=>ym(t.data)));
+  txs.filter(t=>t.cartaoId).forEach(t=>months.add(txMonth(t)));
   months.add(STATE.mesSel);
   const allMeses = Array.from(months).sort();
 
   const faturasPorMesCartao = {};
   txs.filter(t=>t.cartaoId).forEach(t=>{
-    const month = ym(t.data);
+    const month = txMonth(t);
     if (!faturasPorMesCartao[month]) faturasPorMesCartao[month] = {};
     if (!faturasPorMesCartao[month][t.cartaoId]) faturasPorMesCartao[month][t.cartaoId] = [];
     faturasPorMesCartao[month][t.cartaoId].push(t);
@@ -654,7 +680,7 @@ function calcDerived(){
 
   const txsMes = txs.filter(t=>ym(t.data) === STATE.mesSel && !t.cartaoId).sort((a,b)=>b.data.localeCompare(a.data));
   const faturasMes = faturasPorMesCartao[STATE.mesSel] || {};
-  const porCat = categoryTotals(txs.filter(t=>ym(t.data) === STATE.mesSel && t.tipo === "despesa" && isDone(t)));
+  const porCat = categoryTotals(txs.filter(t=>txMonth(t) === STATE.mesSel && t.tipo === "despesa" && isDone(t)));
   const usoCartao = {};
   STATE.cards.forEach(c=>{
     usoCartao[c.id] = txs.filter(t=>t.cartaoId === c.id && !isDone(t)).reduce((s,t)=>s+t.valor,0);
@@ -713,7 +739,7 @@ function render(){
     ["investimentos","Investimentos"],
     ["config","Configurações"],
   ];
-  const monthOptions = d.allMeses.map(m=>`<option value="${m}" ${m === STATE.mesSel ? "selected" : ""}>${monthLabel(m)}</option>`).join("");
+  const monthOptions = d.allMeses.map(m=>`<option value="${m}" ${m === STATE.mesSel ? "selected" : ""}>${isMobile() ? monthLabelShort(m) : monthLabel(m)}</option>`).join("");
   const nav = tabs.map(([id,label])=>`<button class="${STATE.aba === id ? "active" : ""}" onclick="setAba('${id}')">${label}</button>`).join("");
   let body = "";
   if (STATE.aba === "dashboard") body = renderDashboard(d);
@@ -743,6 +769,7 @@ function render(){
             : `☁<span class="hide-mobile"> Drive ✓</span>`}
       </button>`
     : `<button class="btn" onclick="googleSignIn()" title="Entrar com Google para sincronizar">☁<span class="hide-mobile"> Entrar</span></button>`;
+  const darkToggleBtn = isMobile() ? "" : `<button onclick="toggleDark()" data-dark-btn title="Alternar tema claro/escuro" style="display:inline-flex;align-items:center;gap:8px;padding:5px 12px 5px 6px;border:1.5px solid var(--line);border-radius:999px;background:var(--soft);cursor:pointer;font-family:inherit;color:var(--muted);font-size:12px;font-weight:600;"><span data-dark-track style="position:relative;width:30px;height:17px;border-radius:999px;background:var(--line);flex-shrink:0;transition:background .2s;"><span data-dark-thumb style="position:absolute;top:2px;left:2px;width:13px;height:13px;border-radius:50%;background:white;box-shadow:0 1px 3px rgba(0,0,0,.22);transition:transform .2s;display:block;"></span></span><span data-dark-label>Escuro</span></button>`;
   document.getElementById("root").innerHTML = `
     <main class="app">
       <header class="topbar">
@@ -757,12 +784,7 @@ function render(){
           <select class="input white" style="width:auto" onchange="setUserView(this.value)">${userOptions}</select>
           <select class="input white" style="width:auto" onchange="STATE.mesSel=this.value;render()">${monthOptions}</select>
           ${cloudBtn}
-          <button onclick="toggleDark()" id="darkBtn" class="hide-mobile" title="Alternar tema claro/escuro" style="display:inline-flex;align-items:center;gap:8px;padding:5px 12px 5px 6px;border:1.5px solid var(--line);border-radius:999px;background:var(--soft);cursor:pointer;font-family:inherit;color:var(--muted);font-size:12px;font-weight:600;">
-            <span id="darkBtnTrack" style="position:relative;width:30px;height:17px;border-radius:999px;background:var(--line);flex-shrink:0;transition:background .2s;">
-              <span id="darkBtnThumb" style="position:absolute;top:2px;left:2px;width:13px;height:13px;border-radius:50%;background:white;box-shadow:0 1px 3px rgba(0,0,0,.22);transition:transform .2s;display:block;"></span>
-            </span>
-            <span id="darkBtnLabel">Escuro</span>
-          </button>
+          ${darkToggleBtn}
           <button class="btn primary hide-mobile" onclick="setAba('nova')">+ Nova transação</button>
         </div>
       </header>
@@ -807,8 +829,8 @@ function renderDashboard(d){
     </section>` : "";
   const saldoAnt = STATE.consAnt && d.saldoAnt !== 0 ? ` ${fmt(d.saldoAnt)}` : "";
 
-  const despesasMes = d.txs.filter(t=>ym(t.data) === STATE.mesSel && t.tipo === "despesa" && isDone(t));
-  const receitasMes = d.txs.filter(t=>ym(t.data) === STATE.mesSel && t.tipo === "receita" && isDone(t));
+  const despesasMes = d.txs.filter(t=>txMonth(t) === STATE.mesSel && t.tipo === "despesa" && isDone(t));
+  const receitasMes = d.txs.filter(t=>txMonth(t) === STATE.mesSel && t.tipo === "receita" && isDone(t));
   const despCatTop5 = categoryTotals(despesasMes).slice(0,5);
   const recCatTop5 = categoryTotals(receitasMes).slice(0,5);
   const despMax = despCatTop5[0]?.[1] || 1;
@@ -819,7 +841,7 @@ function renderDashboard(d){
   if (!STATE.dashCartaoSel || !cardById(STATE.dashCartaoSel)) STATE.dashCartaoSel = STATE.cards[0]?.id || "";
   const cartaoSel = cardById(STATE.dashCartaoSel);
   const comprasCartaoSel = cartaoSel
-    ? d.txs.filter(t=>t.cartaoId === cartaoSel.id && ym(t.data) === STATE.mesSel).slice().sort((a,b)=>b.valor-a.valor).slice(0,5)
+    ? d.txs.filter(t=>t.cartaoId === cartaoSel.id && txMonth(t) === STATE.mesSel).slice().sort((a,b)=>b.valor-a.valor).slice(0,5)
     : [];
 
   const mesesEvo = d.allMeses.filter(m=>m <= STATE.mesSel).slice(-6);
@@ -1094,7 +1116,7 @@ function renderCards(d){
     const usage = d.usoCartao[card.id] || 0;
     const pct = card.limite > 0 ? Math.min(100,Math.round((usage/card.limite)*100)) : 0;
     const color = CARD_COLORS[idx % CARD_COLORS.length];
-    return `<article class="card" style="background:${color};position:relative;overflow:hidden;cursor:pointer" onclick="STATE.cardDetalhe='${card.id}';render()">
+    return `<article class="card" style="background:${color};position:relative;overflow:hidden;cursor:pointer" onclick="STATE.cardDetalhe='${card.id}';STATE.faturaMesSel=null;render()">
       <div style="position:absolute;inset:0;background:radial-gradient(ellipse at 85% 10%,rgba(255,255,255,.2) 0%,transparent 55%);pointer-events:none"></div>
       <div style="position:relative">
         <div class="row between" style="align-items:flex-start">
@@ -1157,9 +1179,40 @@ function renderCardForm(){
 function renderCardDetail(d){
   const card = cardById(STATE.cardDetalhe);
   if (!card) { STATE.cardDetalhe = null; render(); return; }
-  const txs = visibleTxs().filter(t=>t.cartaoId === card.id).sort((a,b)=>b.data.localeCompare(a.data));
+  const txs = visibleTxs().filter(t=>t.cartaoId === card.id);
   const grouped = {};
-  txs.forEach(t=>{ const month = ym(t.data); if (!grouped[month]) grouped[month] = []; grouped[month].push(t); });
+  txs.forEach(t=>{ const month = faturaYM(t.data,card.diaFech); if (!grouped[month]) grouped[month] = []; grouped[month].push(t); });
+  const meses = Object.keys(grouped).sort().reverse();
+  let mesSel = STATE.faturaMesSel;
+  if (!mesSel || !meses.includes(mesSel)) mesSel = meses[0] || null;
+  STATE.faturaMesSel = mesSel;
+  const fatArr = mesSel ? grouped[mesSel].slice().sort((a,b)=>b.data.localeCompare(a.data)) : [];
+  const fatTotal = fatArr.reduce((s,t)=>s+t.valor,0);
+  const fatAllPaid = fatArr.length > 0 && fatArr.every(isDone);
+  const fatSomePaid = fatArr.some(isDone);
+  const fatStatus = fatAllPaid ? ["ok","Pago"] : (fatSomePaid ? ["info","Parcial"] : ["info","A pagar"]);
+  const fatUserTotals = {};
+  fatArr.forEach(t=>{ fatUserTotals[t.userId] = (fatUserTotals[t.userId]||0)+t.valor; });
+  const fatUsersText = STATE.userView === ALL_USERS
+    ? Object.entries(fatUserTotals).map(([id,v])=>`${esc(userName(id))}: ${fmt(v)}`).join(" · ")
+    : "";
+  const chipsHtml = meses.map(m=>`<button class="fatura-chip ${m===mesSel?"active":""}" onclick="selFaturaMes(${jsArg(m)})">${monthLabelShort(m)}</button>`).join("");
+  const faturaHtml = mesSel ? `
+    <div class="fatura-chips">${chipsHtml}</div>
+    <section class="panel" style="margin-bottom:12px">
+      <div class="row between wrap" style="gap:10px;margin-bottom:14px">
+        <div>
+          <h2 style="font-size:21px;font-weight:700;letter-spacing:-.4px;margin:0">${monthLabel(mesSel)}</h2>
+          <p class="muted" style="font-size:13px;margin-top:3px;line-height:1.5">${fatArr.length} compra${fatArr.length===1?"":"s"} · fecha dia ${card.diaFech} · vence dia ${card.diaVenc}${fatUsersText?`<br>${fatUsersText}`:""}</p>
+        </div>
+        <div class="row wrap" style="gap:8px;align-items:center">
+          ${fatAllPaid?"":`<button class="btn small primary" onclick="pagarFaturaComp(${jsArg(card.id)},${jsArg(mesSel)})">Pagar tudo</button>`}
+          <span class="chip ${fatStatus[0]}">${fatStatus[1]}</span>
+          <strong class="neg" style="font-size:19px;font-family:var(--font-mono)">-${fmt(fatTotal)}</strong>
+        </div>
+      </div>
+      <div class="list">${fatArr.map(t=>renderTxRow(t,false)).join("")}</div>
+    </section>` : empty("Nenhuma fatura neste cartão.");
   const usage = d.usoCartao[card.id] || 0;
   const pct = card.limite > 0 ? Math.min(100,Math.round((usage/card.limite)*100)) : 0;
   const idx = STATE.cards.findIndex(c=>c.id === card.id);
@@ -1179,7 +1232,7 @@ function renderCardDetail(d){
         <div class="row between" style="font-size:13px;margin-top:8px"><span>${fmt(usage)} usado</span><span>Limite ${fmt(card.limite)}</span></div>
       </div>
     </section>
-    ${Object.keys(grouped).sort().reverse().map(month=>renderFaturaRow(card.id,month,grouped[month])).join("") || empty("Nenhuma fatura neste cartão.")}
+    ${faturaHtml}
   </main>
   <nav class="bottom-nav">
     <button onclick="STATE.cardDetalhe=null;setAba('dashboard')"><span class="bn-icon">📊</span>Resumo</button>
@@ -1660,6 +1713,15 @@ function renderConfig(){
     </section>
     <section class="panel">
       <h2 class="section-title">Preferências</h2>
+      <div class="field" style="margin-bottom:16px">
+        <label>Aparência</label>
+        <button onclick="toggleDark()" data-dark-btn style="display:flex;align-items:center;justify-content:space-between;gap:10px;width:100%;padding:11px 14px;border:1.5px solid var(--line);border-radius:10px;background:var(--bg);cursor:pointer;font-family:inherit;color:var(--text);font-size:14px;font-weight:500;">
+          <span data-dark-label>Tema claro</span>
+          <span data-dark-track style="position:relative;width:30px;height:17px;border-radius:999px;background:var(--line);flex-shrink:0;transition:background .2s;">
+            <span data-dark-thumb style="position:absolute;top:2px;left:2px;width:13px;height:13px;border-radius:50%;background:white;box-shadow:0 1px 3px rgba(0,0,0,.22);transition:transform .2s;display:block;"></span>
+          </span>
+        </button>
+      </div>
       <div class="field">
         <label>Dias para aviso de vencimento</label>
         <input class="input" type="number" min="1" max="60" value="${settings.dueDays}" onchange="settingsDueDays(this.value)"/>
@@ -1988,6 +2050,17 @@ function toggleFatura(cardId,month){
   STATE.faturaOpen[key] = !STATE.faturaOpen[key];
   render();
 }
+function selFaturaMes(month){
+  STATE.faturaMesSel = month;
+  render();
+}
+function pagarFaturaComp(cardId,month){
+  const card = cardById(cardId);
+  if (!card) return;
+  STATE.txs.forEach(t=>{ if (t.cartaoId === cardId && faturaYM(t.data,card.diaFech) === month && txMatchesUser(t)) { t.situacao = "pago"; t.updatedAt = new Date().toISOString(); } });
+  persist();
+  render();
+}
 
 function startCardAdd(){
   STATE.cardEditId = null;
@@ -2150,12 +2223,9 @@ async function registerPwa(){
 }
 
 function _updateDarkBtn(isDark){
-  const thumb = document.getElementById("darkBtnThumb");
-  const track = document.getElementById("darkBtnTrack");
-  const label = document.getElementById("darkBtnLabel");
-  if(thumb) thumb.style.transform = isDark ? "translateX(13px)" : "none";
-  if(track) track.style.background = isDark ? "var(--blue)" : "var(--line)";
-  if(label) label.textContent = isDark ? "Claro" : "Escuro";
+  document.querySelectorAll("[data-dark-thumb]").forEach(el=>el.style.transform = isDark ? "translateX(13px)" : "none");
+  document.querySelectorAll("[data-dark-track]").forEach(el=>el.style.background = isDark ? "var(--blue)" : "var(--line)");
+  document.querySelectorAll("[data-dark-label]").forEach(el=>el.textContent = isDark ? "Tema escuro" : "Tema claro");
 }
 function toggleDark(){
   const html = document.documentElement;
@@ -2172,6 +2242,7 @@ function initTheme(){
 }
 function boot(){
   initTheme();
+  try { window.matchMedia("(max-width:760px)").addEventListener("change", ()=>render()); } catch(e){}
   const data = loadState();
   STATE.txs = data.txs;
   STATE.cards = data.cards;
