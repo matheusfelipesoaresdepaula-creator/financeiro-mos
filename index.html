@@ -144,7 +144,7 @@ input,select{min-width:0}
   .topbar{align-items:flex-start;flex-direction:column;margin-bottom:14px}
   .top-actions{width:100%;justify-content:stretch;gap:6px}
   .top-actions .input{flex:1}
-  .grid.cols-2,.grid.cols-3{grid-template-columns:1fr}
+  .grid.cols-2,.grid.cols-3{grid-template-columns:1fr !important}
   .grid.metrics{grid-template-columns:repeat(2,minmax(0,1fr))}
   .metric{padding:14px 14px}
   .metric span{font-size:10px;margin-bottom:5px}
@@ -159,6 +159,11 @@ input,select{min-width:0}
   .hide-mobile{display:none}
   .show-mobile{display:inline}
   .nav{display:none}
+  /* Formulário mobile */
+  .seg{width:100%;display:flex}
+  .seg button{flex:1;text-align:center}
+  .panel .grid.cols-2{grid-template-columns:1fr !important;gap:10px !important}
+  .panel .row{flex-wrap:wrap;gap:8px}
   .icon-btn{padding:8px 10px;min-width:42px;min-height:42px;display:inline-flex;align-items:center;justify-content:center;font-size:15px}
   .bottom-nav{
     position:fixed;bottom:0;left:0;right:0;
@@ -274,6 +279,7 @@ const STATE = {
   showInvestForm:false,
   faturaOpen:{},
   faturaMesSel:null,
+  formAdvanced:false,
   form:emptyForm(),
   cardForm:emptyCardForm(),
   investForm:emptyInvestForm(),
@@ -1792,6 +1798,28 @@ function renderTxForm(){
   const recBase = ym(form.data || today());
   const recAte = (form.recorrAte && form.recorrAte >= recBase) ? form.recorrAte : addM(recBase,5);
   const recCount = Math.max(1,monthsBetween(recBase,recAte));
+  const hasValue = Number.isFinite(value) && value > 0;
+  const valorColor = isInvest
+    ? (form.subtipoInv === "resgate" ? "var(--green)" : "var(--red)")
+    : (form.tipo === "receita" ? "var(--green)" : "var(--red)");
+  const sign = (form.tipo === "receita" || (isInvest && form.subtipoInv === "resgate")) ? "+" : "-";
+  const sitLabel = {a_pagar:"A pagar",pago:"Pago",a_receber:"A receber",recebido:"Recebido"}[form.situacao] || "";
+  const adv = STATE.formAdvanced || !!STATE.editId;
+  const showAdvToggle = !isInvest && !isCard;
+  const advBlock = `
+    <div class="grid cols-2" style="margin-top:12px">
+      <div class="field"><label>Situação</label><select class="input" onchange="STATE.form.situacao=this.value;render()">${form.tipo === "receita" ? `<option value="a_receber" ${form.situacao==="a_receber"?"selected":""}>A receber</option><option value="recebido" ${form.situacao==="recebido"?"selected":""}>Recebido</option>` : `<option value="a_pagar" ${form.situacao==="a_pagar"?"selected":""}>A pagar</option><option value="pago" ${form.situacao==="pago"?"selected":""}>Pago</option>`}</select></div>
+      <div class="field"><label>Vencimento</label><input class="input" type="date" value="${form.dataVenc}" oninput="STATE.form.dataVenc=this.value"/></div>
+    </div>
+    ${!STATE.editId ? `<div class="panel tight" style="margin-top:12px;background:var(--bg)">
+      <label class="row" style="font-weight:650"><input type="checkbox" ${form.recorrente ? "checked" : ""} onchange="STATE.form.recorrente=this.checked;render()"/> Lançamento recorrente</label>
+      ${form.recorrente ? `<div class="field" style="margin-top:10px">
+        <label>Repetir até</label>
+        <input class="input white" type="month" min="${recBase}" value="${recAte}" oninput="STATE.form.recorrAte=this.value;render()"/>
+        <p class="footer-note" style="margin-top:6px">De ${monthLabel(recBase)} até ${monthLabel(recAte)} · ${recCount} ${recCount === 1 ? "lançamento" : "lançamentos"}.</p>
+      </div>` : ""}
+    </div>` : ""}`;
+
   return `<section class="panel">
     <div class="seg" style="margin-bottom:14px">
       <button class="${form.tipo === "despesa" ? "active" : ""}" onclick="setTipo('despesa')">Despesa</button>
@@ -1804,7 +1832,7 @@ function renderTxForm(){
     </div>` : ""}
     <div class="grid cols-2">
       <div class="field" style="grid-column:1/-1"><label>Descrição</label><input class="input" placeholder="${isInvest ? "Ex: Reserva de emergência" : "Ex: Aluguel, Salário..."}" value="${esc(form.desc)}" oninput="STATE.form.desc=this.value"/></div>
-      <div class="field"><label>Valor</label><input class="input" inputmode="numeric" placeholder="R$ 0,00" value="${esc(moneyDisplay(form.valor))}" oninput="handleMoneyInput(this, STATE.form)"/></div>
+      <div class="field"><label>Valor</label><input class="input" inputmode="numeric" placeholder="R$ 0,00" value="${esc(moneyDisplay(form.valor))}" oninput="handleMoneyInput(this, STATE.form)" style="font-family:var(--font-mono);font-weight:600;color:${hasValue ? valorColor : "var(--text)"}"/></div>
       <div class="field"><label>Data</label><input class="input" type="date" value="${form.data}" oninput="STATE.form.data=this.value" onchange="STATE.form.data=this.value;render()"/></div>
       <div class="field"><label>Responsável</label><select class="input" onchange="STATE.form.userId=this.value">${userOptions}</select></div>
       ${isInvest ? `<div class="field"><label>Caixinha</label><select class="input" onchange="STATE.form.caixinhaId=this.value;render()">
@@ -1821,18 +1849,13 @@ function renderTxForm(){
         <div class="field"><label>Cartão</label><select class="input white" onchange="STATE.form.cartaoId=this.value;render()"><option value="">Selecione</option>${STATE.cards.map(c=>`<option value="${c.id}" ${form.cartaoId===c.id?"selected":""}>${esc(c.nome)}</option>`).join("")}</select></div>
         <div class="field"><label>Parcelas</label><select class="input white" onchange="STATE.form.parcelas=parseInt(this.value);render()">${parcels}</select></div>
       </div>${preview}
-    </div>` : `<div class="grid cols-2" style="margin-top:12px">
-      <div class="field"><label>Situação</label><select class="input" onchange="STATE.form.situacao=this.value">${form.tipo === "receita" ? `<option value="a_receber" ${form.situacao==="a_receber"?"selected":""}>A receber</option><option value="recebido" ${form.situacao==="recebido"?"selected":""}>Recebido</option>` : `<option value="a_pagar" ${form.situacao==="a_pagar"?"selected":""}>A pagar</option><option value="pago" ${form.situacao==="pago"?"selected":""}>Pago</option>`}</select></div>
-      <div class="field"><label>Vencimento</label><input class="input" type="date" value="${form.dataVenc}" oninput="STATE.form.dataVenc=this.value"/></div>
-    </div>`}
-    ${!STATE.editId && !isCard ? `<div class="panel tight" style="margin-top:12px;background:var(--bg)">
-      <label class="row" style="font-weight:650"><input type="checkbox" ${form.recorrente ? "checked" : ""} onchange="STATE.form.recorrente=this.checked;render()"/> Lançamento recorrente</label>
-      ${form.recorrente ? `<div class="field" style="margin-top:10px">
-        <label>Repetir até</label>
-        <input class="input white" type="month" min="${recBase}" value="${recAte}" oninput="STATE.form.recorrAte=this.value;render()"/>
-        <p class="footer-note" style="margin-top:6px">De ${monthLabel(recBase)} até ${monthLabel(recAte)} · ${recCount} ${recCount === 1 ? "lançamento" : "lançamentos"}.</p>
-      </div>` : ""}
     </div>` : ""}
+    ${showAdvToggle ? `
+      <button class="btn ghost" onclick="toggleFormAdvanced()" style="margin-top:14px;padding-left:0;color:var(--blue);font-weight:600;display:inline-flex;align-items:center;gap:7px">
+        <span style="display:inline-flex;align-items:center;justify-content:center;width:19px;height:19px;border-radius:50%;border:1.5px solid var(--blue);font-size:14px;line-height:1;flex-shrink:0">${adv ? "−" : "+"}</span>
+        ${adv ? "Menos opções" : "Mais opções"}
+      </button>
+      ${adv ? advBlock : ""}` : ""}
     ${STATE.erro ? `<p class="neg" style="font-size:13px;margin-top:10px">${esc(STATE.erro)}</p>` : ""}
     <div class="row" style="margin-top:14px">
       ${STATE.editId ? `<button class="btn ghost" onclick="cancelEdit()">Cancelar</button>` : ""}
@@ -1843,6 +1866,7 @@ function renderTxForm(){
 
 function setAba(id){
   STATE.aba = id;
+  STATE.formAdvanced = false;
   if (id !== "nova") { STATE.editId = null; STATE.form = emptyForm(newTxUserId()); STATE.erro = ""; }
   render();
 }
@@ -2048,6 +2072,10 @@ function pagarFatura(cardId,month){
 function toggleFatura(cardId,month){
   const key = `${cardId}_${month}`;
   STATE.faturaOpen[key] = !STATE.faturaOpen[key];
+  render();
+}
+function toggleFormAdvanced(){
+  STATE.formAdvanced = !STATE.formAdvanced;
   render();
 }
 function selFaturaMes(month){
